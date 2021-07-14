@@ -1,0 +1,117 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+
+
+library(broom.mixed)
+library(broom)
+library(modelsummary)
+library(here)
+library(magrittr)
+library(kableExtra)
+
+
+op.protest.1 <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/op.protest.1.rds")
+op.protest.2 <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/op.protest.2.rds")
+op.protest.3 <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/op.protest.3.rds")
+op.protest.4 <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/op.protest.4.rds")
+op.protest.5 <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/op.protest.5.rds")
+
+op.model.list <- list("Intercept Only" = op.protest.1, 
+                      "Demographics Only" = op.protest.2,
+                      "Demographics and Attitudinal" = op.protest.3,
+                      "Country and Province Variables" = op.protest.4, 
+                      "Full w/Varying Coefficients" = op.protest.5)
+
+
+class(op.model.list[[1]]) = c("custom", class(op.model.list[[1]]))
+class(op.model.list[[2]]) = c("custom", class(op.model.list[[2]]))
+class(op.model.list[[3]]) = c("custom", class(op.model.list[[3]]))
+class(op.model.list[[4]]) = c("custom", class(op.model.list[[4]]))
+class(op.model.list[[5]]) = c("custom", class(op.model.list[[5]]))
+
+
+coef.list <- c("minorityYes" = "Minority: Yes",
+               "minorityDeclinetoanswer" = "Minority: DK/Decline",
+               "age25to34years" = "25-34",
+               "age35to44years" = "35-44",
+               "age45to54years" = "45-54",
+               "age55to64years" = "55-65",
+               "ageAge65orolder" = ">65",
+               "ed_z" = "Education",
+               "ideology_z" = "Ideology",
+               "income.5.cat21M40%" = "21-40",
+               "income.5.cat41M60%" = "41-60",
+               "income.5.cat61M80%" = "61-80",
+               "income.5.cat81M100%" = "81-100",
+               "genderFemale" = "Female",
+               "genderNonMbinary" = "Non-binary",
+               "genderNoneoftheabove" = "None of the above",
+               "contact_persDontknowDdeclinetoanswer" = "Contact: DK/Decline",
+               "contact_persYes" = "Contact: Yes",
+               "contact_nonpersDontknowDdeclinetoanswer" = "Network Contact: DK/Decline",
+               "contact_nonpersYes" = "Network Contact: Yes",
+               "benefit_persDontknowDdeclinetoanswer" = "Benefit: DK/Decline",
+               "benefit_persYes" = "Benefit: Yes",
+               "troops_crime_persYes" = "Crime Experience: Yes",
+               "american_inf_1DontknowDdeclinetoanswer" = "Influence 1: DK/Decline",
+               "american_inf_1Alittle" = "Influence 1: A little",
+               "american_inf_1Some" = "Influence 1: Some",
+               "american_inf_1Alot" = "Influence 1: A lot",
+               "american_inf_2DontknowDdeclinetoanswer" = "Influence 2: DK/Decline",
+               "american_inf_2Veryative" = "Influence 2: Very negative",
+               "american_inf_2Negative" = "Influence 2: Negative",
+               "american_inf_2Positive" = "Influence 2: Positive",
+               "american_inf_2Veryitive" = "Influence 2: Very positive",
+               "basecount_z" = "Base count",
+               "gdp_z" = "GDP",
+               "pop_z" = "Population",
+               "troops_z" = "Troop deployment size",
+               "Intercept" = "Intercept")
+
+
+# tidy method extracts level names into new column
+
+
+tidy.custom = broom.mixed:::tidy.brmsfit
+glance.custom = function(x, ...) {
+  data.frame(
+    Link = x$family$link,
+    Family = x$family$family,
+    nobs = nrow(x$data)
+  )
+}
+
+
+# Troops Model
+panel.1 <- modelsummary::modelsummary(op.model.list,
+                                      statistic = "conf.int",
+                                      stars = FALSE,
+                                      coef_map = coef.list,
+                                      longtable = TRUE,
+                                      caption = "Bayesian multilevel logistic regressions predicting protest \\label{tab:predictiveopinionmodels}",
+                                      output = "latex")  %>%  
+  kable_styling(latex_options = c("striped", "scale_down", "repeat_header"), protect_latex = TRUE, font_size = 7, position = "left",
+                stripe_index = c(1:2, 5:6, 9:10, 13:14, 17:18, 21:22, 25:26, 29:30, 33:34, 37:38, 41:42, 45:46, 49:50, 53:54, 57:58, 61:62, 65:66, 69:70)) %>%
+  pack_rows("Minority Status", 1, 4, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Age", 5, 14, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Gender Identification", 19, 24, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Income Quantile", 25, 34, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Interpersonal Contact", 35, 38, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Network Contact", 39, 42, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Economic Benefits", 43, 46, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Personal Experience with Crime", 47, 48, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Amount of U.S. Influence", 49, 56, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Quality of U.S. Influence", 57, 62, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Group-level Variables", 63, 69, bold = TRUE, background = "gray", color = "white") %>% 
+  landscape() %>% 
+  save_kable(here("Tables/Chapter-Protests/model-protest-full.tex"),
+             keep_tex = TRUE)
+
+
+
+```

@@ -1,0 +1,2032 @@
+---
+title: "Minority Chapter Analysis and Notes"
+author: "Michael Flynn"
+date: "Last Updated: `r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Front Matter
+
+This section loads the data files and libraries. Assembles the main data
+
+```{r, echo = FALSE, include = FALSE}
+library(tidyverse)
+library(psych)
+library(tidyquant)
+library(modelr)
+library(cshapes)
+library(countrycode)
+library(dagitty)
+library(ggdag)
+library(arm)
+library(brms)
+library(rstan)
+library(cmdstanr)
+library(parallel)
+library(tidybayes)
+library(ggdist)
+library(kableExtra)
+library(BayesPostEst)
+library(texreg)
+library(broom)
+library(broom.mixed)
+library(ggExtra)
+library(ggmcmc)
+library(rgdal)
+library(rgeos)
+library(rmapshaper)
+library(broom)
+library(ggpubr)
+library(ggrepel)
+library(ggpubr)
+library(patchwork)
+library(here)
+library(arm)
+library(modelsummary)
+library(tictoc)
+library(glue)
+
+# Keep these here to update if needed
+#devtools::install_github("vincentarelbundock/modelsummary")
+#devtools::install_github("bbolker/broom.mixed")
+
+theme_flynn <- theme_linedraw() + theme(text = element_text(size = 11),
+                                        plot.title = element_text(face = "bold", size = 14),
+                                        plot.subtitle = element_text(size = 12),
+                                        plot.caption = element_text(face = "italic", size = 8),
+                                        strip.background = element_rect(fill = "gray80", color = "black"),
+                                        strip.text = element_text(color = "black", face = "bold"),
+                                        panel.grid.major = element_line(color = "gray60", size = 0.15),
+                                        panel.grid.minor = element_line(color = "gray90", size = 0.1))
+
+
+ccode.list <- c("200", "210", "211", "230", "235", "255", "290", "325", "640", "690", "732", "740", "840", "900")
+
+# Load opinion data for individual-level protest models.
+load(here::here("Data/General", "opinion.data.RData")) 
+
+
+```
+
+
+
+# DAGs
+```{r DAG for minority variable}
+
+library(dagitty)
+
+minority.dag <- dagitty("dag{
+                        Minority [exposure]
+                        Attitudes [outcome]
+                        
+                        Minority -> Income -> Attitudes
+                        Minority -> Education -> Attitudes
+                        Education -> Income -> Ideology -> Influence
+                        Education -> Ideology
+                        Minority -> Ideology -> Attitudes
+                        Minority -> Influence -> Attitudes
+                        Minority -> Contact -> Attitudes
+                        Minority -> Attitudes -> Contact
+                        Minority -> Democracy -> Attitudes
+                        Minority -> Benefits -> Attitudes 
+                        Sex -> Income -> Attitudes
+                        Sex -> Education -> Attitudes
+                        Sex -> Ideology -> Attitudes
+                        
+                        }")
+
+coordinates(minority.dag) <- list(x=c(Minority=-1, Attitudes=3, Income=1, Education=1, Ideology=0, Influence=1, Contact=1, Democracy=2, Benefits=1, Sex=-1),
+                                  y=c(Minority=0, Attitudes=0, Income=2, Education=-0.5, Ideology=0.5, Influence=-2, Contact=3, Democracy=-2, Benefits=4, Sex=1))
+
+
+minority.dag %>% 
+  tidy_dagitty() %>% 
+  ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_dag_edges() +
+  geom_dag_text(parse = TRUE, color = "black") +
+  theme_dag_blank()
+
+ggsave(here("Figures/Chapter-Minority", "figure-dag-minority-minority.png"))
+
+adjustmentSets(minority.dag)
+
+```
+
+
+# Descriptive Figures
+
+```{r Descriptive Figures}
+
+
+# Minorities as a percent of the sample by year
+minperc <- o.data %>% 
+  group_by(country, year) %>% 
+  mutate(minority.yes = ifelse(minority == "Yes", 1, 0),
+         groupobs = n_distinct(X1)) %>% 
+  dplyr::summarise(minority = sum(minority.yes, na.rm = TRUE),
+            obs = mean(groupobs, na.rm = TRUE)) %>% 
+  mutate(min.per = minority/obs) %>% 
+  filter(!is.na(country))
+
+ggplot(minperc, aes(y = factor(year), x = min.per, color = country)) +
+  geom_text(aes(label = country), position = position_jitter(height = 0.4), size = 2.5) +
+  theme_flynn +
+  scale_x_continuous(labels = scales::percent_format()) +
+  guides(color = FALSE) +
+  theme(plot.title.position = "plot") +
+  labs(x = "Percent",
+       y = "Year",
+       color = "Country",
+       title = "Self-identified minority group members as percent of country sample")
+
+ggsave(here("/Figures/Chapter-Minority/fig-minority-percent-time.png"))
+
+
+
+#### Minority Percent Table ####
+minperc.wide <- minperc %>% 
+  mutate(min.per = round(min.per*100, 1)) %>% 
+  pivot_wider(names_from = "year",
+              values_from = "min.per") %>% 
+  group_by(country) %>% 
+  dplyr::summarise("2018" = mean(`2018`, na.rm = TRUE),
+                   "2019" = mean(`2019`, na.rm = TRUE),
+                   "2020" = mean(`2020`, na.rm = TRUE)) %>% 
+  dplyr::rename(`Country` = `country`) %>% 
+  kable(format = "latex", align = "lrrr", booktabs = TRUE, caption = "Minority self-identification of respondents by country-year \\label{tab:minoritypercent}") %>% 
+  kable_styling(position = "center", font_size = 9, latex_options = c("striped"), protect_latex = TRUE) %>% 
+  add_header_above(c(" ", "Survey Year" = 3), bold = TRUE) %>% 
+  row_spec(0, bold = "true", color = "black") %>% 
+  column_spec(1, width = "3in") %>% 
+    footnote(general = "Reported numbers indicate percent of surveey respondents for the referent country-year self-identifying as a member of a racial, ethnic, or religious minority group.",
+             footnote_as_chunk = TRUE,
+             escape = TRUE,
+             threeparttable = TRUE) %>% 
+  save_kable(here("/Tables/Chapter-Minority/table-minority-percent.tex"))
+
+
+
+
+
+# Minority population count by country and year
+ggplot(o.data %>% filter(!is.na(minority)), aes(x = minority, y = ..count..)) +
+  geom_bar(stat = "count") +
+  facet_grid(country ~ year) +
+  theme(axis.text.x = element_text(angle = 45))
+
+
+
+#### Japan Map for Minority population ####
+
+base.locations.japan <- read_csv(here("../Geographic files/Bases.csv")) %>% 
+  filter(`Country Name` == "Japan" & base == 1) %>% 
+  mutate(Longitude = as.numeric(Longitude),
+         Latitude = as.numeric(Latitude))
+
+map.japan <- rgdal::readOGR(here("../Geographic files/Chubu_Region_AL320/"))
+
+japan.df <- tidy(map.japan, region = "name") %>% 
+  mutate(provcode = 740*100+as.numeric(as.factor(id)),
+         id = ifelse(grepl(".*Hokk.*", id), "Hokkaido Region", id))
+
+japan.min <- o.data %>% 
+  filter(country == "Japan" & minority == "Yes") %>% 
+  dplyr::select(province, minority) %>% 
+  mutate(totalminority = nrow(.),
+         province = ifelse(province == "Okinawa", "Kyushu", province)) %>% 
+  group_by(province) %>%
+  mutate(provseq = 1) %>% 
+  dplyr::summarise(prov.min = sum(provseq),
+            totalminority = mean(totalminority, na.rm = TRUE)) %>% 
+  mutate(minoritypercent = prov.min/totalminority,
+         id = paste(province, "Region", sep = " "),
+         id = ifelse(id == "Kanto Region", "Kanto", id),
+         id = ifelse(id == "Tohoku Region", "Tohoku", id)) %>% 
+  ungroup()
+
+japan.df.fill <- japan.df %>% 
+  left_join(japan.min, by = c("id")) %>% 
+  as_tibble() %>% 
+  arrange(order)
+
+# Generate polygon centroids
+japan.centroids <- map.japan %>% 
+  gCentroid(byid = TRUE, id = unique(map.japan$name)) %>% 
+  as.data.frame(.$coords) %>% 
+  mutate(province = row.names(.),
+         province = ifelse(grepl("okk", province), "Hokkaido", province))
+
+
+
+# Map of Japan with U.S. military bases overlaid
+
+ggplot() +
+  geom_polygon(data = japan.df.fill, aes(x = long, y = lat, group = group, fill = minoritypercent), color = "black", size = 0.2) +
+  geom_point(data = base.locations.japan, aes(x = Longitude, y = Latitude), color = "blue", alpha = 0.5, size = 4) +
+  geom_label_repel(data = japan.centroids, aes(x = x, y = y), label = japan.centroids$province, min.segment.length = unit(0, "in"), size = 2.75, box.padding = 1.5) +
+  coord_fixed(ratio = 1.3) +
+  theme_void() +
+  theme(plot.margin = margin(t=0, b=0, l=0, r=0, unit = "pt")) +
+  scale_fill_distiller(palette = "Greens", direction = 1, type = "seq", limits = c(0, 0.4), labels = scales::percent_format()) +
+  labs(fill = "Percent")
+
+ggsave(here("/Figures/Chapter-Minority/fig-map-japan-min-location.png"), height = 5, width = 8, units = "in")
+
+
+
+
+
+#### Minority status and education ####
+
+ggplot(o.data %>% filter(grepl("Yes|No", minority)), aes(x = ed, y = income.5.cat, color = minority)) +
+  geom_point(position = position_jitter(width = 0.45, height = 0.3), alpha = 0.4) +
+  scale_x_continuous(breaks = seq(0,25, 5)) +
+  facet_wrap(. ~ country)
+
+```
+
+
+
+# Models
+
+## Minority only models
+
+```{r Basic Modles with minority only}
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
+                set_prior("normal(0, 5)", class = "Intercept"))
+
+ITER <- 1000
+WARMUP <-  500
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+tic()
+#### Troops  ####
+m.t1 <- brm(troops_1_cat ~ minority +
+            (1 |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.t1"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            backend = "cmdstanr")
+
+
+toc()
+
+tic()
+
+#### People ####
+m.p1 <- brm(american_p_cat ~ minority +
+              (1 |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.p1"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            backend = "cmdstanr")
+
+toc()
+
+
+#### Government ####
+
+tic()
+m.g1 <- brm(american_g_cat ~ minority +
+            (1 |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.g1"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            backend = "cmdstanr")
+
+toc()
+
+```
+
+
+## Demographic and attitudinal models
+
+```{r Full Models with demographic and attitudinal variables, echo = FALSE}
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
+                set_prior("normal(0, 5)", class = "Intercept"))
+
+ITER <- 1000
+WARMUP <-  500
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+tic()
+#### Troops  ####
+
+
+m.t2 <- brm(troops_1_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.t2"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.85,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+
+toc()
+
+tic()
+
+#### People ####
+m.p2 <- brm(american_p_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.p2"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.85,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+tic()
+
+#### Government ####
+
+
+m.g2 <- brm(american_g_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
+            (1 |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.g2"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.85,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+```
+
+
+## Demographic and Attitudinal Models w/ Varying Slopes
+
+```{r Full Models with demographic and attitudinal variables, echo = FALSE}
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
+                set_prior("normal(0, 5)", class = "Intercept"))
+
+ITER <- 2000
+WARMUP <-  1000
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+tic()
+#### Troops  ####
+m.t3 <- brm(troops_1_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 + minority |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.t3"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.85,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+
+toc()
+
+
+tic()
+#### People ####
+m.p3 <- brm(american_p_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 + minority |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.p3"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.85,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+
+tic()
+#### Government ####
+m.g3 <- brm(american_g_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
+            (1 + minority |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.g3"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.85,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+```
+
+
+
+
+## Interaction with contact
+
+```{r Full Models with demographic and attitudinal variables, echo = FALSE}
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
+                set_prior("normal(0, 5)", class = "Intercept"))
+
+ITER <- 1000
+WARMUP <-  500
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+tic()
+#### Troops  ####
+
+
+m.t4 <- brm(troops_1_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.t4"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+
+toc()
+
+tic()
+
+#### People ####
+m.p4 <- brm(american_p_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.p4"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+tic()
+
+#### Government ####
+
+
+m.g4 <- brm(american_g_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
+            (1 |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.g4"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+```
+
+
+
+## Interaction with contact varying effect
+
+```{r Full Models with demographic and attitudinal variables, echo = FALSE}
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
+                set_prior("normal(0, 5)", class = "Intercept"))
+
+ITER <- 1200
+WARMUP <-  600
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+tic()
+#### Troops  ####
+
+
+m.t5 <- brm(troops_1_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 + minority + minority:contact_pers + contact_pers |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.t5"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+
+toc()
+
+tic()
+
+#### People ####
+m.p5 <- brm(american_p_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 + minority + minority:contact_pers + contact_pers |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.p5"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+tic()
+
+#### Government ####
+
+
+m.g5 <- brm(american_g_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
+            (1 + minority + minority:contact_pers + contact_pers |r| country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.g5"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+```
+
+
+
+## Japan only models
+
+### Varying minority model
+```{r Japan Only Varying minority coefficient}
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
+                set_prior("normal(0, 5)", class = "Intercept"))
+
+ITER <- 1000
+WARMUP <-  500
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+tic()
+#### Troops  ####
+
+
+m.t4.japan <- brm(troops_1_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 + minority |r| province),
+                    data = o.data %>% filter(country == "Japan"),
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.t4.japan"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+
+toc()
+
+tic()
+
+#### People ####
+m.p4.japan <- brm(american_p_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 + minority |r| province),
+                    data = o.data %>% filter(country == "Japan"),
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.p4.japan"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+tic()
+
+#### Government ####
+
+
+m.g4.japan <- brm(american_g_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
+            (1 + minority |r| province),
+                    data = o.data %>% filter(country == "Japan"),
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.g4.japan"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+```
+
+
+### Varying interaction models
+
+
+
+```{r Japan Only interaction}
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
+                set_prior("normal(0, 5)", class = "Intercept"))
+
+ITER <- 1000
+WARMUP <-  500
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+tic()
+#### Troops  ####
+
+
+m.t5.japan <- brm(troops_1_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 + minority + minority:contact_pers + contact_pers |r| province),
+                    data = o.data %>% filter(country == "Japan"),
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.t5.japan"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+
+toc()
+
+tic()
+
+#### People ####
+m.p5.japan <- brm(american_p_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 + minority + minority:contact_pers + contact_pers |r| province),
+                    data = o.data %>% filter(country == "Japan"),
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.p5.japan"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+tic()
+
+#### Government ####
+
+
+m.g5.japan <- brm(american_g_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
+            (1 + minority + minority:contact_pers + contact_pers |r| province),
+                    data = o.data %>% filter(country == "Japan"),
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.g5.japan"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.83,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+toc()
+
+```
+
+
+# Figures
+
+## Minority Only Models
+
+```{r Figure: Minority Only}
+
+m.t1.fig <- m.t1 %>% 
+  gather_draws(b_mupos_minorityYes,
+               b_muneg_minorityYes,
+               b_mudk_minorityYes) %>% 
+  mutate(outcome = "U.S. Troops")
+
+m.p1.fig <- m.p1 %>% 
+  gather_draws(b_mupos_minorityYes,
+               b_muneg_minorityYes,
+               b_mudk_minorityYes) %>% 
+  mutate(outcome = "U.S. People")
+
+m.g1.fig <- m.g1 %>% 
+  gather_draws(b_mupos_minorityYes,
+               b_muneg_minorityYes,
+               b_mudk_minorityYes) %>% 
+  mutate(outcome = "U.S. Government")
+
+fig.com <- bind_rows(m.t1.fig, m.p1.fig, m.g1.fig) %>% 
+  mutate(.variable = ifelse(grepl(".*pos.*", .variable), "Positive",
+                            ifelse(grepl(".*neg", .variable), "Negative", "Don't know/Decline"))) %>% 
+  mutate(outcome = factor(outcome, levels = c("U.S. Troops", "U.S. Government", "U.S. People")))
+
+# Note this uses the HDI instead of the QI
+ggplot(fig.com, aes(x = .value, y = .variable, group = outcome)) +
+  ggdist::stat_halfeye(point_interval = median_hdi, .width = c(0.50, 0.80, 0.95), interval_size_range = c(0.75, 2.25, 3.5, 4.75), fill = "dodgerblue1", alpha = 0.8) +
+  geom_vline(xintercept = 0, color = "red") +
+  facet_wrap(. ~ outcome) +
+  theme_flynn +
+  theme(plot.title.position = "plot") +
+  labs(x = "Coefficient Estimate",
+       y = "Response/Equation",
+       title = "Minority self-identification and attitudes towards U.S. actors")
+
+ggsave(here("/Figures/Chapter-Minority/fig-coefplot-base.png"), height = 5, width = 8, units = "in")
+```
+
+
+## Minority with full controls
+
+```{r Figures: Minority and Controls}
+
+
+m.t2.fig <- m.t2 %>% 
+  gather_draws(b_muneg_minorityYes,
+               b_mupos_minorityYes,
+               b_mudk_minorityYes) %>% 
+  mutate(model = "U.S. Troops")
+
+m.p2.fig <- m.p2 %>% 
+  gather_draws(b_muneg_minorityYes,
+               b_mupos_minorityYes,
+               b_mudk_minorityYes) %>% 
+  mutate(model = "U.S. People")
+
+m.g2.fig <- m.g2 %>% 
+  gather_draws(b_muneg_minorityYes,
+               b_mupos_minorityYes,
+               b_mudk_minorityYes) %>% 
+  mutate(model = "U.S. Government")
+
+fig.com <- bind_rows(m.t2.fig, m.g2.fig, m.p2.fig) %>% 
+  mutate(model = factor(model, levels = c("U.S. Troops", "U.S. Government", "U.S. People")),
+         equation = case_when(
+           .variable = grepl(".*muneg_minorityYes.*", .variable) ~ "Negative\nViews", 
+           .variable = grepl(".*mupos.*", .variable) ~ "Positive\nViews",
+           .variable = grepl(".*mudk.*", .variable) ~ "Don't know\nDecline"))
+
+
+# Note this  uses the HDI
+ggplot(fig.com, aes(x = .value, y = equation)) +
+  stat_halfeye(point_interval = median_hdi, .width = c(0.5, 0.89, 0.95), interval_size_range = c(0.75, 2.25, 3.5, 4.75), position = ggstance::position_dodgev(height = 0.35), alpha = 0.8, fill = "dodgerblue1") +
+  geom_vline(xintercept = 0, color = "red") +
+  facet_wrap(. ~ model) +
+  scale_color_brewer(palette = "Set1") +
+  theme_flynn +
+  theme(plot.title.position = "plot" ) +
+  labs(x = "Coefficient estimate",
+       y = "",
+       color = "Response/\nEquation",
+       title = "Minority self-identification and views of U.S. actors")
+
+ggsave(here("/Figures/Chapter-Minority/fig-coefplot-full.png"), height = 5, width = 8, units = "in")
+
+```
+
+
+## Minority full with other coefficients
+
+```{r Figures: Minority and Controls}
+
+
+m.t2.fig.controls <- m.t2 %>% 
+  gather_draws(b_mupos_ed_z,
+               b_muneg_minorityYes,
+               b_mupos_minorityYes,
+               b_mudk_minorityYes,
+               `b_mupos_income.5.cat21M40%`,
+               `b_mupos_income.5.cat41M60%`,
+               `b_mupos_income.5.cat61M80%`,
+               `b_mupos_income.5.cat81M100%`,
+               b_mupos_age25to34years,
+               b_mupos_age35to44years,
+               b_mupos_age45to54years,
+               b_mupos_age55to64years,
+               b_mupos_ageAge65orolder,
+               b_mupos_genderFemale,
+               b_mupos_genderNonMbinary,
+               b_mupos_genderNoneoftheabove,
+               b_mupos_genderFemale,
+               b_mupos_genderNonMbinary,
+               b_mupos_genderNoneoftheabove,
+               b_muneg_ed_z,
+               `b_muneg_income.5.cat21M40%`,
+               `b_muneg_income.5.cat41M60%`,
+               `b_muneg_income.5.cat61M80%`,
+               `b_muneg_income.5.cat81M100%`,
+               b_muneg_age25to34years,
+               b_muneg_age35to44years,
+               b_muneg_age45to54years,
+               b_muneg_age55to64years,
+               b_muneg_ageAge65orolder,
+               b_muneg_genderFemale,
+               b_muneg_genderNonMbinary,
+               b_muneg_genderNoneoftheabove,
+               b_muneg_genderFemale,
+               b_muneg_genderNonMbinary,
+               b_muneg_genderNoneoftheabove,
+               b_mudk_ed_z,
+               `b_mudk_income.5.cat21M40%`,
+               `b_mudk_income.5.cat41M60%`,
+               `b_mudk_income.5.cat61M80%`,
+               `b_mudk_income.5.cat81M100%`,
+               b_mudk_age25to34years,
+               b_mudk_age35to44years,
+               b_mudk_age45to54years,
+               b_mudk_age55to64years,
+               b_mudk_ageAge65orolder,
+               b_mudk_genderFemale,
+               b_mudk_genderNonMbinary,
+               b_mudk_genderNoneoftheabove,
+               b_mudk_genderFemale,
+               b_mudk_genderNonMbinary,
+               b_mudk_genderNoneoftheabove) %>% 
+  median_qi(.width = c(0.50, 0.80, 0.90)) %>% 
+  mutate(model = "U.S. Troops")
+
+m.p2.fig.controls <- m.p2 %>% 
+  gather_draws(b_mupos_ed_z,
+               b_muneg_minorityYes,
+               b_mupos_minorityYes,
+               b_mudk_minorityYes,
+               `b_mupos_income.5.cat21M40%`,
+               `b_mupos_income.5.cat41M60%`,
+               `b_mupos_income.5.cat61M80%`,
+               `b_mupos_income.5.cat81M100%`,
+               b_mupos_age25to34years,
+               b_mupos_age35to44years,
+               b_mupos_age45to54years,
+               b_mupos_age55to64years,
+               b_mupos_ageAge65orolder,
+               b_mupos_genderFemale,
+               b_mupos_genderNonMbinary,
+               b_mupos_genderNoneoftheabove,
+               b_mupos_genderFemale,
+               b_mupos_genderNonMbinary,
+               b_mupos_genderNoneoftheabove,
+               b_muneg_ed_z,
+               `b_muneg_income.5.cat21M40%`,
+               `b_muneg_income.5.cat41M60%`,
+               `b_muneg_income.5.cat61M80%`,
+               `b_muneg_income.5.cat81M100%`,
+               b_muneg_age25to34years,
+               b_muneg_age35to44years,
+               b_muneg_age45to54years,
+               b_muneg_age55to64years,
+               b_muneg_ageAge65orolder,
+               b_muneg_genderFemale,
+               b_muneg_genderNonMbinary,
+               b_muneg_genderNoneoftheabove,
+               b_muneg_genderFemale,
+               b_muneg_genderNonMbinary,
+               b_muneg_genderNoneoftheabove,
+               b_mudk_ed_z,
+               `b_mudk_income.5.cat21M40%`,
+               `b_mudk_income.5.cat41M60%`,
+               `b_mudk_income.5.cat61M80%`,
+               `b_mudk_income.5.cat81M100%`,
+               b_mudk_age25to34years,
+               b_mudk_age35to44years,
+               b_mudk_age45to54years,
+               b_mudk_age55to64years,
+               b_mudk_ageAge65orolder,
+               b_mudk_genderFemale,
+               b_mudk_genderNonMbinary,
+               b_mudk_genderNoneoftheabove,
+               b_mudk_genderFemale,
+               b_mudk_genderNonMbinary,
+               b_mudk_genderNoneoftheabove) %>% 
+  median_qi(.width = c(0.50, 0.80, 0.90)) %>% 
+  mutate(model = "U.S. People")
+
+m.g2.fig.controls <- m.g2 %>% 
+  gather_draws(b_mupos_ed_z,
+               b_muneg_minorityYes,
+               b_mupos_minorityYes,
+               b_mudk_minorityYes,
+               `b_mupos_income.5.cat21M40%`,
+               `b_mupos_income.5.cat41M60%`,
+               `b_mupos_income.5.cat61M80%`,
+               `b_mupos_income.5.cat81M100%`,
+               b_mupos_age25to34years,
+               b_mupos_age35to44years,
+               b_mupos_age45to54years,
+               b_mupos_age55to64years,
+               b_mupos_ageAge65orolder,
+               b_mupos_genderFemale,
+               b_mupos_genderNonMbinary,
+               b_mupos_genderNoneoftheabove,
+               b_mupos_genderFemale,
+               b_mupos_genderNonMbinary,
+               b_mupos_genderNoneoftheabove,
+               b_muneg_ed_z,
+               `b_muneg_income.5.cat21M40%`,
+               `b_muneg_income.5.cat41M60%`,
+               `b_muneg_income.5.cat61M80%`,
+               `b_muneg_income.5.cat81M100%`,
+               b_muneg_age25to34years,
+               b_muneg_age35to44years,
+               b_muneg_age45to54years,
+               b_muneg_age55to64years,
+               b_muneg_ageAge65orolder,
+               b_muneg_genderFemale,
+               b_muneg_genderNonMbinary,
+               b_muneg_genderNoneoftheabove,
+               b_muneg_genderFemale,
+               b_muneg_genderNonMbinary,
+               b_muneg_genderNoneoftheabove,
+               b_mudk_ed_z,
+               `b_mudk_income.5.cat21M40%`,
+               `b_mudk_income.5.cat41M60%`,
+               `b_mudk_income.5.cat61M80%`,
+               `b_mudk_income.5.cat81M100%`,
+               b_mudk_age25to34years,
+               b_mudk_age35to44years,
+               b_mudk_age45to54years,
+               b_mudk_age55to64years,
+               b_mudk_ageAge65orolder,
+               b_mudk_genderFemale,
+               b_mudk_genderNonMbinary,
+               b_mudk_genderNoneoftheabove,
+               b_mudk_genderFemale,
+               b_mudk_genderNonMbinary,
+               b_mudk_genderNoneoftheabove) %>% 
+  median_qi(.width = c(0.50, 0.80, 0.90)) %>% 
+  mutate(model = "U.S. Government")
+
+fig.com.controls <- bind_rows(m.t2.fig.controls, m.g2.fig.controls, m.p2.fig.controls) %>% 
+  mutate(model = factor(model, levels = c("U.S. Troops", "U.S. Government", "U.S. People")),
+         equation = case_when(
+           .variable = grepl(".*muneg.*", .variable) ~ "Negative\nViews", 
+           .variable = grepl(".*mupos.*", .variable) ~ "Positive\nViews",
+           .variable = grepl(".*mudk.*", .variable) ~ "Don't know\nDecline"),
+         .variable = case_when(
+           .variable = grepl("ed_z", .variable) ~ "Education",
+           .variable = grepl("income.5.cat21M40%", .variable) ~ "Income: 21%-40%",
+           .variable = grepl("income.5.cat41M60%", .variable) ~ "Income: 41%-60%",
+           .variable = grepl("income.5.cat61M80%", .variable) ~ "Income: 61%-80%",
+           .variable = grepl("income.5.cat81M100%", .variable) ~ "Income: 81%-100%",
+           .variable = grepl("minorityYes", .variable) ~ "Minority: Yes",
+           .variable = grepl("age25to34years", .variable) ~ "Age: 25-34",
+           .variable = grepl("age35to44years", .variable) ~ "Age: 35-44",
+           .variable = grepl("age45to54years", .variable) ~ "Age: 45-54",
+           .variable = grepl("age55to64years", .variable) ~ "Age: 55-64",
+           .variable = grepl("ageAge65orolder", .variable) ~ "Age: 65 or older",
+           .variable = grepl("genderFemale", .variable) ~ "Gender: Female",
+           .variable = grepl("genderNonMbinary", .variable) ~ "Gender: Non-binary",
+           .variable = grepl("genderNoneoftheabove", .variable) ~ "Gender: None of the above"
+         ),
+         vargroup = case_when(
+           vargroup = grepl("Minority", .variable) ~ "Minority",
+           vargroup = grepl("Income", .variable) ~ "Income",
+           vargroup = grepl("Age", .variable) ~ "Age",
+           vargroup = grepl("Gender", .variable) ~ "Gender",
+           vargroup = grepl("Education", .variable) ~ "Education"
+         ),
+           .variable = gsub("Minority: ", "", .variable),
+           .variable = gsub("Income: ", "", .variable),
+           .variable = gsub("Age: ", "", .variable),
+           .variable = gsub("Gender: ", "", .variable)
+         )
+         
+
+
+# Note this  uses the HDI
+ggplot(fig.com.controls, aes(x = .value, y = .variable, color = equation)) +
+  stat_pointinterval(aes(x = .value, lower = .lower, upper = .upper), position = position_dodge(width = 0.4)) +
+  geom_vline(xintercept = 0, color = "red") +
+  facet_grid(vargroup ~ model, scales = "free_y", switch = "y") +
+  scale_color_brewer(palette = "Set2") +
+  theme_flynn +
+  theme(plot.title.position = "plot",
+        strip.placement = "outside",
+        strip.background.y = element_rect(fill = "white", linetype = 0),
+        panel.spacing = unit(0, "cm")) +
+  guides(color = guide_legend(reverse = TRUE)) +
+  labs(x = "Coefficient estimate",
+       y = "",
+       color = "Response/\nEquation",
+       title = "Minority self-identification and views of U.S. actors")
+
+ggsave(here("/Figures/Chapter-Minority/fig-coefplot-full.controls.png"), height = 6, width = 8, units = "in")
+
+```
+
+
+
+## Minority with varying intercepts
+
+```{r Figure Minority Varying Coefficient}
+
+
+# Troops
+m.t3.fig <- m.t3 %>% 
+  spread_draws(r_country__mupos[country, minorityYes],
+               r_country__muneg[country, minorityYes],
+               b_mupos_minorityYes,
+               b_muneg_minorityYes) %>% 
+  filter(minorityYes == "minorityYes") %>% 
+  mutate(pos_yes = b_mupos_minorityYes + r_country__mupos,
+         neg_yes = b_muneg_minorityYes + r_country__muneg) %>% 
+  pivot_longer(cols = c(pos_yes, neg_yes),
+               names_to = "equation",
+               values_to = "effect") %>% 
+  dplyr::select(country, equation, effect) %>% 
+  mutate(equation = factor(equation, levels = c("pos_yes", "neg_yes"), labels = c("Positive View", "Negative View")),
+         model = "U.S. Troops")
+
+# People
+m.p3.fig <- m.p3 %>% 
+  spread_draws(r_country__mupos[country, minorityYes],
+               r_country__muneg[country, minorityYes],
+               b_mupos_minorityYes,
+               b_muneg_minorityYes) %>% 
+  filter(minorityYes == "minorityYes") %>% 
+  mutate(pos_yes = b_mupos_minorityYes + r_country__mupos,
+         neg_yes = b_muneg_minorityYes + r_country__muneg) %>% 
+  pivot_longer(cols = c(pos_yes, neg_yes),
+               names_to = "equation",
+               values_to = "effect") %>% 
+  dplyr::select(country, equation, effect) %>% 
+  mutate(equation = factor(equation, levels = c("pos_yes", "neg_yes"), labels = c("Positive View", "Negative View")),
+         model = "U.S. People")
+
+# Government
+m.g3.fig <- m.g3 %>% 
+  spread_draws(r_country__mupos[country, minorityYes],
+               r_country__muneg[country, minorityYes],
+               b_mupos_minorityYes,
+               b_muneg_minorityYes) %>% 
+  filter(minorityYes == "minorityYes") %>% 
+  mutate(pos_yes = b_mupos_minorityYes + r_country__mupos,
+         neg_yes = b_muneg_minorityYes + r_country__muneg) %>% 
+  pivot_longer(cols = c(pos_yes, neg_yes),
+               names_to = "equation",
+               values_to = "effect") %>% 
+  dplyr::select(country, equation, effect) %>% 
+  mutate(equation = factor(equation, levels = c("pos_yes", "neg_yes"), labels = c("Positive View", "Negative View")),
+         model = "U.S. Government")
+
+
+fig.varyingcoefficient <- bind_rows(m.t3.fig, m.p3.fig, m.g3.fig) %>% 
+  mutate(model = factor(model, levels = c("U.S. Troops", "U.S. Government", "U.S. People")),
+         country = gsub(".", " ", country))
+
+
+ggplot(fig.varyingcoefficient, aes(x = effect, y = country, group = equation, color = equation)) + 
+  stat_pointinterval(.width = c(0.50, 0.80, 0.95), 
+                     stat = median_hdi,
+                     position = position_dodge(width = 0.5)) +
+  geom_vline(xintercept = 0, color = "red", width = 1.0) +
+  facet_wrap(. ~ model) +
+  theme_flynn +
+  theme(plot.title.position = "plot") +
+  scale_color_brewer(palette = "Set1", direction = -1) +
+  labs(x = "Effect",
+       y = "",
+       title = "Minority self-identification coefficient across countries",
+       color = "Equation")
+  
+ggsave(here("/Figures/Chapter-Minority/fig-coefplot-varying.png"), height = 5, width = 8, units = "in")
+
+
+
+```
+
+
+## Interaction population level
+
+```{r Figure Minority Varying Coefficient}
+
+m.t5.fig <- m.t5$data %>% 
+  recover_types() %>% 
+  data_grid(minority = c("Yes", "No"),
+            contact_pers = c("Yes", "No"),
+            age = "35 to 44 years",
+            ed_z = mean(ed_z, na.rm = TRUE),
+            ideology_z = mean(ideology_z, na.rm = TRUE),
+            income.5.cat = "41-60%",
+            gender = "Female",
+            benefit_pers = "No",
+            troops_crime_pers = "No",
+            american_inf_1 = "Some",
+            american_inf_2 = "Neither positive nor negative",
+            basecount_z = mean(basecount_z, na.rm = TRUE),
+            gdp_z = mean(gdp_z, na.rm = TRUE),
+            pop_z = mean(pop_z, na.rm = TRUE),
+            troops_z = mean(troops_z, na.rm = TRUE),
+            country = country,
+            .model = m.t5) %>% 
+  add_fitted_draws(model = m.t5, 
+                   n = 1000) %>% 
+  mutate(combination = paste(minority, contact_pers, sep = ":")) %>% 
+  group_by(.category, combination) %>% 
+  compare_levels(data = .,
+                 variable = .value,
+                 by = combination,
+                 draw_indices = c(".category", "combination", "country", ".draw")) %>% 
+  mutate(grouping = "U.S. Troops")
+
+
+m.g5.fig <- m.g5$data %>% 
+  recover_types() %>% 
+  data_grid(minority = c("Yes", "No"),
+            contact_pers = c("Yes", "No"),
+            age = "35 to 44 years",
+            ed_z = mean(ed_z, na.rm = TRUE),
+            ideology_z = mean(ideology_z, na.rm = TRUE),
+            income.5.cat = "41-60%",
+            gender = "Female",
+            benefit_pers = "No",
+            troops_crime_pers = "No",
+            american_inf_1 = "Some",
+            american_inf_2 = "Neither positive nor negative",
+            basecount_z = mean(basecount_z, na.rm = TRUE),
+            gdp_z = mean(gdp_z, na.rm = TRUE),
+            pop_z = mean(pop_z, na.rm = TRUE),
+            troops_z = mean(troops_z, na.rm = TRUE),
+            country = country,
+            .model = m.g5) %>% 
+  add_fitted_draws(model = m.g5, 
+                   n = 1000) %>% 
+  mutate(combination = paste(minority, contact_pers, sep = ":")) %>% 
+  group_by(.category, combination) %>% 
+  compare_levels(data = .,
+                 variable = .value,
+                 by = combination,
+                 draw_indices = c(".category", "combination", "country", ".draw")) %>% 
+  mutate(grouping = "U.S. Government")
+
+
+m.p5.fig <- m.p5$data %>% 
+  recover_types() %>% 
+  data_grid(minority = c("Yes", "No"),
+            contact_pers = c("Yes", "No"),
+            age = "35 to 44 years",
+            ed_z = mean(ed_z, na.rm = TRUE),
+            ideology_z = mean(ideology_z, na.rm = TRUE),
+            income.5.cat = "41-60%",
+            gender = "Female",
+            benefit_pers = "No",
+            troops_crime_pers = "No",
+            american_inf_1 = "Some",
+            american_inf_2 = "Neither positive nor negative",
+            basecount_z = mean(basecount_z, na.rm = TRUE),
+            gdp_z = mean(gdp_z, na.rm = TRUE),
+            pop_z = mean(pop_z, na.rm = TRUE),
+            troops_z = mean(troops_z, na.rm = TRUE),
+            country = country,
+            .model = m.p5) %>% 
+  add_fitted_draws(model = m.p5, 
+                   n = 1000) %>% 
+  mutate(combination = paste(minority, contact_pers, sep = ":")) %>% 
+  group_by(.category, combination) %>% 
+  compare_levels(data = .,
+                 variable = .value,
+                 by = combination,
+                 draw_indices = c(".category", "combination", "country", ".draw")) %>% 
+  mutate(grouping = "U.S. People")
+
+
+m.5.combined <- bind_rows(m.t5.fig, m.g5.fig, m.p5.fig) %>% 
+  mutate(grouping = factor(grouping, levels = c("U.S. Troops", "U.S. Government", "U.S. People"))) %>% 
+  filter(.category %in% c("pos", "neg")) %>% 
+  mutate(.category = case_when(
+    .category == "neg" ~ "Negative Response",
+    .category == "pos" ~ "Positive Response"
+  ),
+  .category = factor(.category, levels = c("Positive Response", "Negative Response")))
+
+filtered.comparisons <- c("Yes:Yes - Yes:No", "Yes:Yes - No:Yes")
+
+
+# Check on the compare_levels function to see if I can specify levels for comparisons
+ggplot(m.5.combined %>% filter(combination %in% filtered.comparisons), aes(x = .value, y = country, color = combination)) +
+  stat_pointinterval(.width = c(0.50, 0.80, 0.95), position = position_dodge()) +
+  geom_vline(xintercept = 0, color = "red", size = 1) +
+  facet_grid(.category ~ grouping) +
+  theme_flynn +
+  theme(plot.title.position = "plot",
+        legend.position = "bottom",
+        legend.spacing.y = unit(0, "cm"),
+        legend.text = element_text(margin = margin(t = 15))) +
+  scale_color_brewer(palette = "Set2", labels = c('Minority respondents reporting\npersonal contact as compared to\n non-minority respondents reporting\ninterpersonal contact', 'Minority respondents reporting\ninterpersonal contact as compared\nto minority respondents not\nreporting interpersonal contact')) +
+  labs(x = "Change in predicted probability",
+       y = "",
+       title = "Change in predicted probability of a positive response",
+       subtitle = "Results of varying coefficients for minority self-identification, personal contact,\nand their interaction across the 14 countries in our survey sample.",
+       color = "Comparisons")
+
+ggsave(here("Figures/Chapter-Minority/fig-contact-minority-interaction.png"), height = 8, width = 8, units = "in")
+
+
+
+```
+
+
+
+
+
+
+### Posterior Predictive Checks
+
+```{r posterior predictive checks}
+
+color_scheme_set(scheme = "blue")
+ppcheck.troops <- pp_check(m.t3, nsamples = 1000, type = "bars_grouped", group = "country")
+ppcheck.people <- pp_check(m.p3, nsamples = 1000, type = "bars_grouped", group = "country")
+ppcheck.gov <- pp_check(m.g3, nsamples = 1000, type = "bars_grouped", group = "country")
+
+
+
+ppcheck.troops.plot <- ppcheck.troops +
+  theme_flynn + 
+  theme(legend.position = "bottom") +
+  scale_x_continuous(breaks = c(1, 2, 3, 4), labels = c("Don't\nknow", "Neg", "Neu", "Pos")) +
+  labs(title = "U.S. Troops")
+
+
+ppcheck.people.plot <- ppcheck.people +
+  theme_flynn + 
+  theme(legend.position = "bottom") +
+  scale_x_continuous(breaks = c(1, 2, 3, 4), labels = c("Don't\nknow", "Neg", "Neu", "Pos")) +
+  labs(title = "U.S. People")
+
+
+ppcheck.gov.plot <- ppcheck.gov +
+  theme_flynn + 
+  theme(legend.position = "bottom") +
+  scale_x_continuous(breaks = c(1, 2, 3, 4), labels = c("Don't\nknow", "Neg", "Neu", "Pos")) +
+  labs(title = 'U.S. Government')
+
+
+ppcheck.troops.plot + ppcheck.people.plot + ppcheck.gov.plot +
+  plot_layout(guides = "collect") &
+  theme_flynn
+
+ggsave(here("/Figures/Chapter-Minority/figure-posterior-predictive-varying.png"), height = 8, width = 18, units = "in")
+```
+
+
+
+## Japan Posterior Figures
+
+```{r Coefficient figures for Japan}
+
+# Troops
+m.t4.japan.fig <- m.t4.japan %>% 
+  spread_draws(r_province__mupos[province, minorityYes],
+               r_province__muneg[province, minorityYes],
+               r_province__mudk[province, minorityYes],
+               b_muneg_minorityYes,
+               b_mupos_minorityYes,
+               b_mudk_minorityYes) %>% 
+  filter(minorityYes == "minorityYes") %>% 
+  mutate(minority.pos = r_province__mupos + b_mupos_minorityYes,
+         minority.neg = r_province__muneg + b_muneg_minorityYes,
+         minority.dk = r_province__mudk + b_mudk_minorityYes) %>% 
+  mutate(outcome = "U.S. Troops")
+
+# Government
+m.g4.japan.fig <- m.g4.japan %>% 
+  spread_draws(r_province__mupos[province, minorityYes],
+               r_province__muneg[province, minorityYes],
+               r_province__mudk[province, minorityYes],
+               b_muneg_minorityYes,
+               b_mupos_minorityYes,
+               b_mudk_minorityYes) %>% 
+  filter(minorityYes == "minorityYes") %>% 
+  mutate(minority.pos = r_province__mupos + b_mupos_minorityYes,
+         minority.neg = r_province__muneg + b_muneg_minorityYes,
+         minority.dk = r_province__mudk + b_mudk_minorityYes) %>% 
+  mutate(outcome = "U.S. Government")
+
+# People
+m.p4.japan.fig <- m.p4.japan %>% 
+  spread_draws(r_province__mupos[province, minorityYes],
+               r_province__muneg[province, minorityYes],
+               r_province__mudk[province, minorityYes],
+               b_muneg_minorityYes,
+               b_mupos_minorityYes,
+               b_mudk_minorityYes) %>% 
+  filter(minorityYes == "minorityYes") %>% 
+  mutate(minority.pos = r_province__mupos + b_mupos_minorityYes,
+         minority.neg = r_province__muneg + b_muneg_minorityYes,
+         minority.dk = r_province__mudk + b_mudk_minorityYes) %>% 
+  mutate(outcome = "U.S. People")
+
+fig.com.japan <- bind_rows(m.t4.japan.fig, m.g4.japan.fig, m.p4.japan.fig) %>% 
+  dplyr::select(province, outcome, minority.pos, minority.neg, minority.dk) %>% 
+  pivot_longer(cols = c(4,5,6),
+               names_to = "equation") %>% 
+  mutate(outcome = factor(outcome, levels = c("U.S. Troops", "U.S. Government", "U.S. People")),
+         equation = case_when(
+           grepl("pos", equation) ~ "Positive",
+           grepl("neg", equation) ~ "Negative",
+           grepl("dk", equation) ~ "Don't know/Decline"
+         )) 
+
+
+RColorBrewer::brewer.pal(9, "Set1")
+
+# Note this  uses the HDI
+ggplot(fig.com.japan, aes(x = value, y = province, color = equation)) +
+  stat_pointinterval(point_interval = median_hdi, .width = c(0.50, 0.80, 0.95), position = ggstance::position_dodgev(height = 0.45)) +
+  geom_vline(xintercept = 0, color = "red") +
+  facet_wrap(. ~ outcome) +
+  scale_color_manual(values = c("#999999", "#E41A1C", "#377EB8")) +
+  theme_flynn +
+  guides(color = guide_legend(reverse = TRUE)) +
+  theme(plot.title.position = "plot" ) +
+  labs(x = "Coefficient estimate",
+       y = "",
+       color = "Response/\nEquation",
+       title = "Minority self-identification and views of U.S. actors in Japan")
+
+ggsave(here("/Figures/Chapter-Minority/fig-coefplot-2-japan.png"), height = 5, width = 8, units = "in")
+
+
+# Posterior below/above zero
+# Note the subscript on the summary term. It will generate two columns if I don't do this and it's a pain in the ass.
+japan.posterior.check.table <- fig.com.japan %>% 
+  group_by(outcome, equation, province) %>% 
+  dplyr::summarise(below.zero = (count(value<0)/length(value))[2]) %>% 
+  ungroup() %>% 
+  mutate(direction = rep(c("Above Zero", "Below Zero"), times = 81)) %>% 
+  pivot_wider(names_from = direction,
+              values_from = below.zero) 
+
+```
+
+
+
+
+
+
+```{r Contact interaction models}
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
+                set_prior("normal(0, 5)", class = "Intercept"))
+
+ITER <- 1000
+WARMUP <-  500
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+# Minority interaction with contact
+
+#### Troops ####
+
+time.1 <- Sys.time()
+
+m.t3 <- brm(troops_1_cat ~ contact_pers +  
+            minority +
+            minority:contact_pers +
+            gdp_log + v2x_polyarchy_z +
+            exports_log + troops_log +
+            pop_log +
+            (1 + minority + contact_pers + minority:contact_pers | country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here("Output//Chapter-Minority/m.t3"),
+                    family = categorical(link = "logit", refcat = "neutral"))
+time.2 <- Sys.time()
+
+m.t3.time <- print(time.2-time.1)
+
+
+
+#### Government ####
+time.1 <- Sys.time()
+
+m.g3 <- brm(american_g_cat ~ contact_pers +  
+            minority +
+            minority:contact_pers +
+            gdp_log + v2x_polyarchy_z +
+            exports_log + troops_log +
+            pop_log +
+            (1 + minority + contact_pers + minority:contact_pers | country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here("Output//Chapter-Minority/m.g3"),
+                    family = categorical(link = "logit", refcat = "neutral"))
+
+time.2 <- Sys.time()
+m.g3.time <- print(time.2-time.1)
+
+
+#### People ####
+time.1 <- Sys.time()
+
+m.p3 <- brm(american_g_cat ~ contact_pers +  
+            minority +
+            minority:contact_pers +
+            gdp_log + v2x_polyarchy_z +
+            exports_log + troops_log +
+            pop_log +
+            (1 + minority + contact_pers + minority:contact_pers | country),
+                    data = o.data,
+                    prior = VAGUEPRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here("Output//Chapter-Minority/m.p3"),
+                    family = categorical(link = "logit", refcat = "neutral"))
+
+time.2 <- Sys.time()
+
+m.p3.time <- print(time.2-time.1)
+```
+
+
+
+
+
+
+# Tables
+
+## Minority Only Models
+
+```{r Table Minority Only}
+coef.list <- c("b_mu_minorityYes" = "Minority: Yes",
+               "b_mu_Intercept" = "Intercept")
+
+
+m.t1 <- readRDS(here("Output/Chapter-Minority/m.t1.rds"))
+m.p1 <- readRDS(here("Output/Chapter-Minority/m.p1.rds"))
+m.g1 <- readRDS(here("Output/Chapter-Minority/m.g1.rds"))
+
+mod.list <- list(" " = m.t1,
+                 " " = m.p1,
+                 " " = m.g1)
+
+class(mod.list[[1]]) = c("custom", class(mod.list[[1]]))
+class(mod.list[[2]]) = c("custom", class(mod.list[[2]]))
+class(mod.list[[3]]) = c("custom", class(mod.list[[3]]))
+
+# tidy method extracts level names into new column
+tidy.custom <- function(x, conf.level=.95, ...) {
+  out = parameters::parameters(x, ci=conf.level, verbose=FALSE) %>%
+        parameters::standardize_names(style="broom") %>%
+        mutate(group = case_when(grepl("mudk", term) ~ "Don't Know",
+                                 grepl("muneg", term) ~ "Negative",
+                                 grepl("mupos", term) ~ "Positive"),
+               term = gsub("dk|neg|pos", "", term))
+  return(out)
+}
+
+glance.custom <- function(x, ...) {
+  ret <- tibble::tibble(N = summary(x)$nobs,
+                        Group = summary(x)$group,
+                        "# Groups" = summary(x)$ngrps,
+                        "sd(mudk_Intercept)" = summary(x)$random$country[1],
+                        "sd(muneg_Intercept)" = summary(x)$random$country[2],
+                        "sd(mupos_Intercept)" = summary(x)$random$country[3],
+                        "Post-warmup samples" = round(as.numeric(summary(x)$chains)*(as.numeric(summary(x)$iter)-as.numeric(summary(x)$warmup)), 0) )
+  ret
+}
+
+
+
+# Troops Model
+panel.1 <- modelsummary_wide(mod.list,
+                  statistic = "conf.int",
+                  fmt = 2,
+                  coef_group = "group",
+                  coef_map = coef.list,
+                  stars = FALSE,
+                  longtable = TRUE,
+                  output = "latex",
+                  caption = "Bayesian multilevel multinomial logistic regressions \\label{tab:minoritybase}",) %>% 
+  kable_styling(latex_options = c("striped", "scale_down", "repeat_header"), protect_latex = TRUE, font_size = 7, position = "left",
+                stripe_index = c(1:2)) %>%
+  add_header_above(c(" ", "U.S. Troops" = 3, "U.S. People" = 3, "U.S. Government" = 3)) %>% 
+  pack_rows("Minority Status", 1, 4, bold = TRUE, background = "gray", color = "white") %>% 
+  landscape() %>% 
+  save_kable(here("Tables/Chapter-Minority/model-minority-base.tex"),
+             keep_tex = TRUE)
+
+
+```
+
+
+
+
+
+## Minority Full Specification 
+
+```{r Minority full specification model}
+
+coef.list <- c("b_mu_minorityYes" = "Minority: Yes",
+               "b_mu_minorityDeclinetoanswer" = "Minority: DK/Decline",
+               "b_mu_age25to34years" = "25-34",
+               "b_mu_age35to44years" = "35-44",
+               "b_mu_age45to54years" = "45-54",
+               "b_mu_age55to64years" = "55-65",
+               "b_mu_ageAge65orolder" = ">65",
+               "b_mu_ed_z" = "Education",
+               "b_mu_ideology_z" = "Ideology",
+               "b_mu_income.5.cat21M40." = "21-40",
+               "b_mu_income.5.cat41M60." = "41-60",
+               "b_mu_income.5.cat61M80." = "61-80",
+               "b_mu_income.5.cat81M100." = "81-100",
+               "b_mu_genderFemale" = "Female",
+               "b_mu_genderNonMbinary" = "Non-binary",
+               "b_mu_genderNoneoftheabove" = "None of the above",
+               "b_mu_contact_persDontknowDdeclinetoanswer" = "Contact: DK/Decline",
+               "b_mu_contact_persYes" = "Contact: Yes",
+               "b_mu_benefit_persDontknowDdeclinetoanswer" = "Benefit: DK/Decline",
+               "b_mu_benefit_persYes" = "Benefit: Yes",
+               "b_mu_troops_crime_persYes" = "Crime Experience: Yes",
+               "b_mu_american_inf_1DontknowDdeclinetoanswer" = "Influence 1: DK/Decline",
+               "b_mu_american_inf_1Alittle" = "Influence 1: A little",
+               "b_mu_american_inf_1Some" = "Influence 1: Some",
+               "b_mu_american_inf_1Alot" = "Influence 1: A lot",
+               "b_mu_american_inf_2DontknowDdeclinetoanswer" = "Influence 2: DK/Decline",
+               "b_mu_american_inf_2Veryative" = "Influence 2: Very negative",
+               "b_mu_american_inf_2Negative" = "Influence 2: Negative",
+               "b_mu_american_inf_2Positive" = "Influence 2: Positive",
+               "b_mu_american_inf_2Veryitive" = "Influence 2: Very positive",
+               "b_mu_basecount_z" = "Base count",
+               "b_mu_gdp_z" = "GDP",
+               "b_mu_pop_z" = "Population",
+               "b_mu_troops_z" = "Troop deployment size",
+               "b_mu_Intercept" = "Intercept")
+
+
+m.t2 <- readRDS(here("Output/Chapter-Minority/m.t2.rds"))
+m.p2 <- readRDS(here("Output/Chapter-Minority/m.p2.rds"))
+m.g2 <- readRDS(here("Output/Chapter-Minority/m.g2.rds"))
+
+mod.list <- list(" " = m.t2,
+                 " " = m.p2,
+                 " " = m.g2)
+
+class(mod.list[[1]]) = c("custom", class(mod.list[[1]]))
+class(mod.list[[2]]) = c("custom", class(mod.list[[2]]))
+class(mod.list[[3]]) = c("custom", class(mod.list[[3]]))
+
+# tidy method extracts level names into new column
+tidy.custom <- function(x, conf.level=.95, ...) {
+  out = parameters::parameters(x, ci=conf.level, verbose=FALSE) %>%
+        parameters::standardize_names(style="broom") %>%
+        mutate(group = case_when(grepl("mudk", term) ~ "Don't Know",
+                                 grepl("muneg", term) ~ "Negative",
+                                 grepl("mupos", term) ~ "Positive"),
+               term = gsub("dk|neg|pos", "", term))
+  return(out)
+}
+
+glance.custom <- function(x, ...) {
+  ret <- tibble::tibble(N = summary(x)$nobs,
+                        Group = summary(x)$group,
+                        "# Groups" = summary(x)$ngrps,
+                        "sd(mudk_Intercept)" = summary(x)$random$country[1],
+                        "sd(muneg_Intercept)" = summary(x)$random$country[2],
+                        "sd(mupos_Intercept)" = summary(x)$random$country[3],
+                        "Post-warmup samples" = round(as.numeric(summary(x)$chains)*(as.numeric(summary(x)$iter)-as.numeric(summary(x)$warmup)), 0) )
+  ret
+}
+
+
+
+# Troops Model
+panel.1 <- modelsummary_wide(mod.list,
+                  statistic = "conf.int",
+                  fmt = 2,
+                  coef_group = "group",
+                  coef_map = coef.list,
+                  stars = FALSE,
+                  longtable = TRUE,
+                  output = "latex",
+                  caption = "Bayesian multilevel multinomial logistic regressions \\label{tab:minorityfull}",) %>% 
+  kable_styling(latex_options = c("striped", "scale_down", "repeat_header"), protect_latex = TRUE, font_size = 7, position = "left",
+                stripe_index = c(1:2, 5:6, 9:10, 13:14, 17:18, 21:22, 25:26, 29:30, 33:34, 37:38, 41:42, 45:46, 49:50, 53:54, 57:58, 61:62, 65:66, 69:70)) %>%
+  add_header_above(c(" ", "U.S. Troops" = 3, "U.S. People" = 3, "U.S. Government" = 3)) %>% 
+  pack_rows("Minority Status", 1, 4, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Age", 5, 14, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Income Quantile", 19, 26, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Gender Identification", 27, 32, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Interpersonal Contact", 33, 36, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Economic Benefits", 37, 40, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Personal Experience with Crime", 41, 42, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Amount of U.S. Influence", 43, 50, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Quality of U.S. Influence", 51, 60, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Group-level Variables", 61, 68, bold = TRUE, background = "gray", color = "white") %>% 
+  landscape() %>% 
+  save_kable(here("Tables/Chapter-Minority/model-minority-full.tex"),
+             keep_tex = TRUE)
+
+
+
+```
+
+
+
+
+## Minority Varying Coefficient Specification 
+
+```{r Minority full specification model}
+
+coef.list <- c("b_mu_minorityYes" = "Minority: Yes",
+               "b_mu_minorityDeclinetoanswer" = "Minority: DK/Decline",
+               "b_mu_age25to34years" = "25-34",
+               "b_mu_age35to44years" = "35-44",
+               "b_mu_age45to54years" = "45-54",
+               "b_mu_age55to64years" = "55-65",
+               "b_mu_ageAge65orolder" = ">65",
+               "b_mu_ed_z" = "Education",
+               "b_mu_ideology_z" = "Ideology",
+               "b_mu_income.5.cat21M40." = "21-40",
+               "b_mu_income.5.cat41M60." = "41-60",
+               "b_mu_income.5.cat61M80." = "61-80",
+               "b_mu_income.5.cat81M100." = "81-100",
+               "b_mu_genderFemale" = "Female",
+               "b_mu_genderNonMbinary" = "Non-binary",
+               "b_mu_genderNoneoftheabove" = "None of the above",
+               "b_mu_contact_persDontknowDdeclinetoanswer" = "Contact: DK/Decline",
+               "b_mu_contact_persYes" = "Contact: Yes",
+               "b_mu_benefit_persDontknowDdeclinetoanswer" = "Benefit: DK/Decline",
+               "b_mu_benefit_persYes" = "Benefit: Yes",
+               "b_mu_troops_crime_persYes" = "Crime Experience: Yes",
+               "b_mu_american_inf_1DontknowDdeclinetoanswer" = "Influence 1: DK/Decline",
+               "b_mu_american_inf_1Alittle" = "Influence 1: A little",
+               "b_mu_american_inf_1Some" = "Influence 1: Some",
+               "b_mu_american_inf_1Alot" = "Influence 1: A lot",
+               "b_mu_american_inf_2DontknowDdeclinetoanswer" = "Influence 2: DK/Decline",
+               "b_mu_american_inf_2Veryative" = "Influence 2: Very negative",
+               "b_mu_american_inf_2Negative" = "Influence 2: Negative",
+               "b_mu_american_inf_2Positive" = "Influence 2: Positive",
+               "b_mu_american_inf_2Veryitive" = "Influence 2: Very positive",
+               "b_mu_basecount_z" = "Base count",
+               "b_mu_gdp_z" = "GDP",
+               "b_mu_pop_z" = "Population",
+               "b_mu_troops_z" = "Troop deployment size",
+               "b_mu_Intercept" = "Intercept")
+
+
+m.t3 <- readRDS(here("Output/Chapter-Minority/m.t3.rds"))
+m.p3 <- readRDS(here("Output/Chapter-Minority/m.p3.rds"))
+m.g3 <- readRDS(here("Output/Chapter-Minority/m.g3.rds"))
+
+mod.list <- list(" " = m.t3,
+                 " " = m.p3,
+                 " " = m.g3)
+
+class(mod.list[[1]]) = c("custom", class(mod.list[[1]]))
+class(mod.list[[2]]) = c("custom", class(mod.list[[2]]))
+class(mod.list[[3]]) = c("custom", class(mod.list[[3]]))
+
+# tidy method extracts level names into new column
+tidy.custom <- function(x, conf.level=.95, ...) {
+  out = parameters::parameters(x, ci=conf.level, verbose=FALSE) %>%
+        parameters::standardize_names(style="broom") %>%
+        mutate(group = case_when(grepl("mudk", term) ~ "Don't Know",
+                                 grepl("muneg", term) ~ "Negative",
+                                 grepl("mupos", term) ~ "Positive"),
+               term = gsub("dk|neg|pos", "", term))
+  return(out)
+}
+
+glance.custom <- function(x, ...) {
+  ret <- tibble::tibble(N = summary(x)$nobs,
+                        Group = summary(x)$group,
+                        "# Groups" = summary(x)$ngrps,
+                        "sd(mudk_Intercept)" = summary(x)$random$country[1],
+                        "sd(muneg_Intercept)" = summary(x)$random$country[4],
+                        "sd(mupos_Intercept)" = summary(x)$random$country[7],
+                        "sd(muneg_minorityYes)" = summary(x)$random$country[6],
+                        "sd(mupos_minorityYes)" = summary(x)$random$country[9],
+                        "sd(mudk_minorityYes)" = summary(x)$random$country[3],
+                        "Post-warmup samples" = round(as.numeric(summary(x)$chains)*(as.numeric(summary(x)$iter)-as.numeric(summary(x)$warmup)), 0) )
+  ret
+}
+
+
+
+# Troops Model
+panel.1 <- modelsummary_wide(mod.list,
+                  statistic = "conf.int",
+                  fmt = 2,
+                  coef_group = "group",
+                  coef_map = coef.list,
+                  stars = FALSE,
+                  longtable = TRUE,
+                  output = "latex",
+                  caption = "Bayesian multilevel multinomial logistic regressions with varying effects \\label{tab:minorityvarying}") %>% 
+  kable_styling(latex_options = c("striped", "scale_down", "repeat_header"), protect_latex = TRUE, font_size = 7, position = "left",
+                stripe_index = c(1:2, 5:6, 9:10, 13:14, 17:18, 21:22, 25:26, 29:30, 33:34, 37:38, 41:42, 45:46, 49:50, 53:54, 57:58, 61:62, 65:66, 69:70)) %>%
+  add_header_above(c(" ", "U.S. Troops" = 3, "U.S. People" = 3, "U.S. Government" = 3)) %>% 
+  pack_rows("Minority Status", 1, 4, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Age", 5, 14, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Income Quantile", 19, 26, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Gender Identification", 27, 32, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Interpersonal Contact", 33, 36, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Economic Benefits", 37, 40, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Personal Experience with Crime", 41, 42, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Amount of U.S. Influence", 43, 50, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Quality of U.S. Influence", 51, 60, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Group-level Variables", 61, 68, bold = TRUE, background = "gray", color = "white") %>% 
+  landscape() %>% 
+  save_kable(here("Tables/Chapter-Minority/model-minority-varying-effect.tex"),
+             keep_tex = TRUE)
+
+
+
+```
+
+### Varying Posterior Distribution Table
+```{r Posterior Distribution Tables}
+
+
+#### Stats on distributions for select cases ####
+posterior.table.troops <- tibble(country = unique(m.t3.fig$country),
+                          percent.positive = NA,
+                          percent.negative = NA) %>% 
+  rowwise() %>% 
+  mutate(percent.positive = length(m.t3.fig$effect[m.t3.fig$effect>0 & m.t3.fig$country==country & m.t3.fig$model == "U.S. Troops" & m.t3.fig$equation== "Positive View"]) / length(m.t3.fig$effect[m.t3.fig$country==country & m.t3.fig$model == "U.S. Troops" & m.t3.fig$equation== "Positive View"]),
+         percent.negative = length(m.t3.fig$effect[m.t3.fig$effect>0 & m.t3.fig$country==country & m.t3.fig$model == "U.S. Troops" & m.t3.fig$equation== "Negative View"]) / length(m.t3.fig$effect[m.t3.fig$country==country & m.t3.fig$model == "U.S. Troops" & m.t3.fig$equation== "Negative View"]))
+
+# People
+posterior.table.peoples <- tibble(country = unique(m.p3.fig$country),
+                                  percent.positive = NA,
+                                  percent.negative = NA) %>% 
+  rowwise() %>% 
+  mutate(percent.positive = length(m.p3.fig$effect[m.p3.fig$effect>0 & m.p3.fig$country==country & m.p3.fig$model == "U.S. People" & m.p3.fig$equation== "Positive View"]) / length(m.p3.fig$effect[m.p3.fig$country==country & m.p3.fig$model == "U.S. People" & m.p3.fig$equation== "Positive View"]),
+         percent.negative = length(m.p3.fig$effect[m.p3.fig$effect>0 & m.p3.fig$country==country & m.p3.fig$model == "U.S. People" & m.p3.fig$equation== "Negative View"]) / length(m.p3.fig$effect[m.p3.fig$country==country & m.p3.fig$model == "U.S. People" & m.p3.fig$equation== "Negative View"]))
+
+
+# Government
+posterior.table.government <- tibble(country = unique(m.g3.fig$country),
+                                     percent.positive = NA,
+                                     percent.negative = NA) %>% 
+  rowwise() %>% 
+  mutate(percent.positive = length(m.g3.fig$effect[m.g3.fig$effect>0 & m.g3.fig$country==country & m.g3.fig$model == "U.S. Government" & m.g3.fig$equation== "Positive View"]) / length(m.g3.fig$effect[m.g3.fig$country==country & m.g3.fig$model == "U.S. Government" & m.g3.fig$equation== "Positive View"]),
+         percent.negative = length(m.g3.fig$effect[m.g3.fig$effect>0 & m.g3.fig$country==country & m.g3.fig$model == "U.S. Government" & m.g3.fig$equation== "Negative View"]) / length(m.g3.fig$effect[m.g3.fig$country==country & m.g3.fig$model == "U.S. Government" & m.g3.fig$equation== "Negative View"]))
+
+
+# Don't forget to escale the punctuation mark!
+posterior.table.list <- list("U.S. Troops" = posterior.table.troops, 
+                             "U.S. People" = posterior.table.peoples, 
+                             "U.S. Government" = posterior.table.government) %>% 
+  map(., ~ mutate(., percent.positive = round(percent.positive*100, 1),
+                percent.negative = round(percent.negative*100, 1),
+                country = gsub("\\.", " ", country)))
+
+
+posterior.table <- posterior.table.list[[1]] %>% 
+  bind_cols(posterior.table.list[[3]]) %>% 
+  bind_cols(posterior.table.list[[2]]) %>% 
+  dplyr::select(-c(4,7)) %>% 
+  kable("latex", col.names = c("", "Positive Response", "Negative Response", "Positive Response", "Negative Response", "Positive Response", "Negative Response"),
+        booktabs = TRUE, caption = "Percent of the posterior distribution that falls above 0 \\label{tab:posteriordistributionzero}") %>% 
+  kable_styling(latex_options = c("striped", "scale_down"), position = "center", protect_latex = TRUE, font_size = 9) %>% 
+  add_header_above(c("", "U.S. Troops" = 2, "U.S. Government" = 2, "U.S. People" = 2), bold = TRUE) %>% 
+  row_spec(0, bold = TRUE) %>% 
+save_kable(here("Tables/Chapter-Minority/table-varying-coefficient-posterior-percent.tex"),
+             keep_tex = TRUE)  
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

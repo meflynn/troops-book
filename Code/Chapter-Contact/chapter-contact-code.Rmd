@@ -1,0 +1,271 @@
+---
+title: "Protest Chapter Analysis and Notes"
+author: "Michael Flynn"
+date: "3/7/2020"
+output:
+  html_document:
+    df_print: paged
+bibliography: "/Chapters/one.bib"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Front Matter
+
+This section loads the data files and libraries. Assembles the main data
+
+```{r setup , echo = FALSE, include = FALSE}
+
+library(tidyverse)
+library(tidyr)
+library(broom)
+library(broom.mixed)
+library(psych)
+library(ipw)
+library(modelr)
+library(cshapes)
+library(countrycode)
+library(dagitty)
+library(ggdag)
+library(arm)
+library(brms)
+library(rstan)
+library(cmdstanr)
+library(parallel)
+library(tidybayes)
+library(scales)
+library(ggdist)
+library(kableExtra)
+library(BayesPostEst)
+library(texreg)
+library(modelsummary)
+library(gt)
+library(webshot)
+library(kableExtra)
+library(ggExtra)
+library(ggmcmc)
+library(ggpubr)
+library(patchwork)
+library(here)
+library(arm)
+library(performance)
+#library(ROCR)
+library(tictoc)
+library(remotes)
+
+#devtools::install_github('tidyss/rroughviz')
+#devtools::install_github("xvrdm/ggrough")
+library(ggrough)
+library(rroughviz)
+
+theme_flynn <- theme_linedraw() + theme(text = element_text(size = 11),
+                                        plot.title = element_text(face = "bold", size = 14),
+                                        plot.subtitle = element_text(size = 12),
+                                        plot.caption = element_text(face = "italic", size = 8),
+                                        strip.background = element_rect(fill = "gray80", color = "black"),
+                                        strip.text = element_text(color = "black", face = "bold"),
+                                        panel.grid.major = element_line(color = "gray60", size = 0.15),
+                                        panel.grid.minor = element_line(color = "gray90", size = 0.1))
+
+
+ccode.list <- c("200", "210", "211", "230", "235", "255", "290", "325", "640", "690", "732", "740", "840", "900")
+
+# Load opinion data for individual-level protest models.
+load(here::here("Data/General", "opinion.data.RData")) 
+
+
+
+
+```
+
+
+
+# Descriptive Figures
+
+```{r descriptive figures}
+
+
+```
+
+
+# Models
+
+```{r set priors}
+
+PRIOR.LIST.T <- get_prior(troops_1_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + contact_pers + benefit_pers +  relig + troops_crime_pers +  american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+            family = categorical(link = "logit", refcat = "neutral")) %>% 
+  filter(class == "b" & !is.na(coef) & coef != "") 
+
+apsr.t <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Papers/Published/Primary Paper - Contact/Bayes Diagnostics/m1.cat.bayes.rds")
+apsr.g <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Papers/Published/Primary Paper - Contact/Bayes Diagnostics/m2.cat.bayes.rds")
+apsr.p <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Papers/Published/Primary Paper - Contact/Bayes Diagnostics/m3.cat.bayes.rds")
+
+
+# Troops Priors
+PRIOR.T <- empty_prior()
+
+coeflist <- as_tibble(apsr.t) %>% 
+  dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
+  pivot_longer(cols = 1:ncol(.), 
+               names_to = c("coef", ".value"),
+               names_pattern = "(.+)_(.+$)") %>% 
+  mutate(prior = glue::glue("normal({round(mean, 2)},{round(sd, 2)})"),
+         dpar = case_when(
+           grepl("mupos", coef) ~ "mupos",
+           grepl("muneg", coef) ~ "muneg",
+           grepl("mudk", coef) ~ "mudk",
+         ),
+         coef = gsub("mupos_|muneg_|mudk_", "", coef),
+         coef = gsub("knowDDe", "knowDde", coef)) %>% 
+  filter(grepl("b_", coef)) %>% 
+  mutate(coef = gsub("b_", "", coef),
+         class = "b") %>% 
+  dplyr::select(-c(mean, sd)) %>% 
+  filter(grepl(".*contact.*|.*benefit.*|.*relig.*", coef))
+
+PRIOR.T <- bind_rows(PRIOR.T, coeflist) 
+PRIOR.T[is.na(PRIOR.T)] <- ""
+
+
+# Government Priors
+PRIOR.G <- set_prior("student_t(1, 0, 2)", class = "b")
+
+coeflist <- as_tibble(apsr.g) %>% 
+  dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
+  pivot_longer(cols = 1:ncol(.), 
+               names_to = c("coef", ".value"),
+               names_pattern = "(.+)_(.+$)") %>% 
+  mutate(prior = glue::glue("student_t(1, {round(mean, 2)},{round(sd, 2)})"),
+         dpar = case_when(
+           grepl("mupos", coef) ~ "mupos",
+           grepl("muneg", coef) ~ "muneg",
+           grepl("mudk", coef) ~ "mudk",
+         ),
+         coef = gsub("mupos_|muneg_|mudk_", "", coef),
+         coef = gsub("knowDDe", "knowDde", coef)) %>% 
+  filter(grepl("b_", coef)) %>% 
+  mutate(coef = gsub("b_", "", coef),
+         class = "b") %>% 
+  dplyr::select(-c(mean, sd)) %>% 
+  filter(grepl(".*contact.*|.*benefit.*|.*relig.*", coef))
+
+PRIOR.G <- bind_rows(PRIOR.G, coeflist) 
+PRIOR.G[is.na(PRIOR.G)] <- ""
+
+
+# Government Priors
+PRIOR.P <- empty_prior()
+
+coeflist <- as_tibble(apsr.p) %>% 
+  dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
+  pivot_longer(cols = 1:ncol(.), 
+               names_to = c("coef", ".value"),
+               names_pattern = "(.+)_(.+$)") %>% 
+  mutate(prior = glue::glue("normal({round(mean, 2)},{round(sd, 2)})"),
+         dpar = case_when(
+           grepl("mupos", coef) ~ "mupos",
+           grepl("muneg", coef) ~ "muneg",
+           grepl("mudk", coef) ~ "mudk",
+         ),
+         coef = gsub("mupos_|muneg_|mudk_", "", coef),
+         coef = gsub("knowDDe", "knowDde", coef)) %>% 
+  filter(grepl("b_", coef)) %>% 
+  mutate(coef = gsub("b_", "", coef),
+         class = "b") %>% 
+  dplyr::select(-c(mean, sd)) %>% 
+  filter(grepl(".*contact.*|.*benefit.*|.*relig.*", coef))
+
+PRIOR.P <- bind_rows(PRIOR.P, coeflist) 
+PRIOR.P[is.na(PRIOR.P)] <- ""
+
+```
+
+```{r contact models}
+
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+ITER <- 5000
+WARMUP <-  2500
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+tic()
+#### Troops  ####
+
+
+m.c.t1 <- brm(troops_1_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                (1 |r| country),
+                    data = o.data,
+                    prior = PRIOR.T,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Contact/m.c.t1"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.85,
+                                          max_treedepth = 13),
+            backend = "cmdstanr")
+
+
+toc()
+
+tic()
+
+#### People ####
+m.c.p1 <- brm(american_p_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                (1 |r| country),
+                    data = o.data,
+                    prior = PRIOR.P,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.c.p1"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.80,
+                                          max_treedepth = 12),
+            backend = "cmdstanr")
+
+toc()
+
+
+tic()
+
+#### Government ####
+m.c.g1 <- brm(american_g_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                (1 |r| country),
+                    data = o.data,
+                    prior = PRIOR.G,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = 1,
+                    seed = SEED,
+                    file = here::here("Output/Chapter-Minority/m.c.g1"),
+                    family = categorical(link = "logit", refcat = "neutral"),
+            control = list(adapt_delta = 0.80,
+                                          max_treedepth = 12),
+            backend = "cmdstanr")
+
+toc()
+
+```

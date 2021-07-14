@@ -1,0 +1,3636 @@
+---
+title: "Protest Chapter Analysis and Notes"
+author: "Michael Flynn"
+date: "3/7/2020"
+output:
+  html_document:
+    df_print: paged
+bibliography: "/Chapters/one.bib"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Front Matter
+
+This section loads the data files and libraries. Assembles the main data
+
+```{r setup , echo = FALSE, include = FALSE}
+
+library(tidyverse)
+library(tidyr)
+library(broom)
+library(broom.mixed)
+library(psych)
+library(ipw)
+library(modelr)
+library(cshapes)
+library(countrycode)
+library(dagitty)
+library(ggdag)
+library(arm)
+library(brms)
+library(rstan)
+library(cmdstanr)
+library(parallel)
+library(tidybayes)
+library(scales)
+library(ggdist)
+library(kableExtra)
+library(BayesPostEst)
+library(texreg)
+library(modelsummary)
+library(gt)
+library(webshot)
+library(kableExtra)
+library(ggExtra)
+library(ggmcmc)
+library(ggpubr)
+library(patchwork)
+library(here)
+library(arm)
+library(performance)
+#library(ROCR)
+library(tictoc)
+library(remotes)
+
+devtools::install_github('tidyss/rroughviz')
+devtools::install_github("xvrdm/ggrough")
+library(ggrough)
+library(rroughviz)
+
+#remotes::install_github('vincentarelbundock/modelsummary') 
+
+# Test
+library(modelsummary)
+
+theme_flynn <- theme_linedraw() + theme(text = element_text(size = 11),
+                                        plot.title = element_text(face = "bold", size = 14),
+                                        plot.subtitle = element_text(size = 12),
+                                        plot.caption = element_text(face = "italic", size = 8),
+                                        strip.background = element_rect(fill = "gray80", color = "black"),
+                                        strip.text = element_text(color = "black", face = "bold"),
+                                        panel.grid.major = element_line(color = "gray70", size = 0.15),
+                                        panel.grid.minor = element_line(color = "gray90", size = 0.1))
+
+
+p.data <- read_csv(here::here("Data/Chapter-Protests", "protest-data-final.csv")) %>% 
+  group_by(ccode) %>% 
+  mutate(log_troops_lag = lag(log_troops, order_by = year),
+         troops_lag = lag(troops, order_by = year),
+         anti_us_protest_lag = lag(anti_us_protest),
+         troops_cumsum = log1p(lag(cumsum(troops), length = 2))) %>% 
+  ungroup() %>% 
+  mutate(log_troops_lag_z = arm::rescale(log_troops_lag),
+         log_troops_z = arm::rescale(log_troops),
+         log_troops_cumsum_z = arm::rescale(troops_cumsum)) %>% 
+  group_by(year) %>% 
+  mutate( troop.prop = troops/sum(troops, na.rm = TRUE))
+
+
+# Load opinion data for individual-level protest models.
+load(here::here("Data/General", "opinion.data.RData")) 
+
+o.data <- o.data %>% 
+  mutate(protest_dummy = ifelse(protest == "Never", 0,
+                                ifelse(protest == "Don't know/Decline to answer", NA, 1)),
+         protest_dummy = factor(protest_dummy, levels = c(0, 1), labels = c("No", "Yes")),
+         log_basecount = log1p(basecount))
+
+
+# Generate random binomial variable based on representative group variables and country.
+# Use this to create a random training sample and then a test sample for the predictions.
+set.seed(66502)
+prediction.data <- o.data %>% 
+  group_by(country, age, gender, income.5.cat) %>% 
+  mutate(sample.group = rbinom(n(), size = 1, prob = 0.8),
+         sample.group = factor(sample.group, levels = c(0, 1), labels = c("Test", "Training")))
+
+training.data <- prediction.data %>% 
+  filter(sample.group == "Training")
+
+
+# Note that we have to refactor the levels for troops_crime_pers and protest_dummy.
+# Because there are levels in the data that aren't in the model it thinks we're trying to force a new
+# factor level into the test data. Stan models can only do this for population-level effects when those factors levels are estimated in the model itself.
+test.data <- prediction.data %>% 
+  ungroup() %>% 
+  filter(sample.group == "Test") %>% 
+  mutate(protest_dummy = factor(protest_dummy, levels = c("Yes", "No")),
+         troops_crime_pers = factor(troops_crime_pers, levels = "Yes", "No"))
+
+
+# Set Seed
+SEED <- 66502
+set.seed(seed = SEED)
+
+```
+
+# Hypotheses
+
+1.  Hypothesis 1b. All else being equal, anti-U.S. base protests are less
+    likely to occur when there are more U.S. servicemembers in a country
+
+2.  Hypothesis 1c. All else being equal, anti-U.S. base protests are less
+    likely to occur when there is an internal rebellion in the host
+    country.
+
+3.  Hypothesis 1d. All else being equal, anti-U.S. base protests are less
+    likely to occur when there are high levels of external threat
+    against the host country.
+
+4.  Hypothesis 1e. All else being equal, anti-U.S. base protests are more
+    likely to occur when there is economic downturn in the host country.
+
+5.  Hypothesis 1f. Anti-U.S. base protests are more likely to occur in
+    states that have medium levels of political openness.
+
+6.  Hypothesis 1g. All else being equal, anti-U.S. base protests are less
+    likely to occur when there are there are high levels of other,
+    unrelated protests occurring in the host country.
+
+7.  Hypothesis (NEW): All else being equal, anti-U.S. base protests are
+    more likely to occur in countries that are democratizing.
+
+Note that Protest Count is the total protests minus anti-U.S. and
+anti-troop protest events
+
+# Descriptive Figures
+
+```{r echo = FALSE, dpi=400}
+
+# Density plot for anti-U.S. protests
+us.hist <- ggplot(data = p.data %>% filter(!is.na(anti_us_protest)), aes(x = anti_us_protest)) +
+  geom_histogram(fill = "dodgerblue1", alpha = 0.4, color = "black", size = 0.2, binwidth = 1) +
+  theme_linedraw() +
+  scale_x_continuous(breaks = seq(0,20,1)) +
+  labs(x = "Count",
+       y = "Density",
+       title = "Anti-U.S. protest events")
+
+# Density plot for anti-U.S. protests
+mil.hist <- ggplot(data = p.data %>% filter(!is.na(anti_us_mil)), aes(x = anti_us_protest)) +
+  geom_histogram(fill = "dodgerblue1", alpha = 0.4, color = "black", size = 0.2, binwidth = 1) +
+  theme_linedraw() +
+  scale_x_continuous(breaks = seq(0,20,1)) +
+  labs(x = "Count",
+       y = "Density",
+       title = "Anti-U.S. military protest events")
+
+
+protest.hist <- wrap_plots(us.hist, mil.hist, ncol = 1) +
+  plot_layout(guides = "collect") &
+  plot_annotation(title = "Protest event counts, 1990-2018") &
+  theme_flynn &
+  theme(plot.title = element_text(size = 14))
+  
+ggsave(here("Figures/chapter-Protests/fig-histogram-protests.png"), width = 8, height = 5, units = "in")
+protest.hist
+
+
+
+
+# Scatterplot of troop deployments and protests
+ggplot(data = p.data, aes(x = troops, y = anti_us_protest)) +
+  geom_jitter(width = 1, height = 1, alpha = .3) +
+  theme_linedraw() +
+  labs(x = "U.S. troop deployment size",
+       y = "Count",
+       title = "Count of anti-U.S. protests")
+
+
+ggplot(data = p.data, aes(x = troops, y = anti_us_mil)) +
+  geom_jitter(width = 1, height = 0.1, alpha = .3) +
+  theme_linedraw() +
+  labs(x = "U.S. troop deployment size",
+       y = "Count",
+       title = "Count of anti-U.S. military protests")
+
+
+# Scatterplot GDP and Protests
+ggplot(data = p.data, aes(x = gdp, y = anti_us_protest)) +
+  geom_jitter(width = 1, height = 1, alpha = .3) +
+  theme_linedraw() +
+  labs(x = "Real GDP",
+       y = "Count",
+       title = "Count of anti-U.S. protests")
+
+ggplot(data = p.data, aes(x = gdp, y = anti_us_mil)) +
+  geom_jitter(width = 1, height = 0.1, alpha = .3) +
+  theme_linedraw() +
+  labs(x = "Real GDP",
+       y = "Count",
+       title = "Count of anti-U.S. military protests")
+
+
+# Scatterplot of Polyarchy index and protests
+ggplot(data = p.data, aes(x = v2x_polyarchy, y = anti_us_protest)) +
+  geom_jitter(width = 0.1, height = 0.5, alpha = 0.3) +
+  theme_linedraw() +
+  labs(x = "Polyarchy Index",
+       y = "Count",
+       title = "Count of anti-U.S. protests")
+
+ggplot(data = p.data, aes(x = v2x_polyarchy, y = anti_us_mil)) +
+  geom_jitter(width = 0.1, height = 0.1, alpha = 0.3) +
+  theme_linedraw() +
+  labs(x = "Polyarchy Index",
+       y = "Count",
+       title = "Count of anti-U.S. military protests")
+
+
+# Scatterplot of idealpointdistance and protest
+ggplot(data = p.data, aes(x = idealdistance_2, y = anti_us_protest)) +
+  geom_jitter(width = 0.1, height = 0.5, alpha = 0.3) +
+  theme_linedraw() +
+  labs(x = "UN Ideal Point Distance from U.S.",
+       y = "Count",
+       title = "Count of anti-U.S. protests")
+
+ggplot(data = p.data, aes(x = idealdistance_2, y = anti_us_mil)) +
+  geom_jitter(width = 0.1, height = 0.1, alpha = 0.3) +
+  theme_linedraw() +
+  labs(x = "UN Ideal Point Distance from U.S.",
+       y = "Count",
+       title = "Count of anti-U.S. military protests")
+
+
+
+
+
+```
+
+# DAGs
+
+## Protest DAG
+
+```{r, protest-dag,  echo = FALSE, dpi=400}
+library(tidygraph)
+library(latex2exp)
+library(dagitty)
+library(ggraph)
+# Draw DAG for Protest Count
+
+coords <- list(x = c(Protest = 6, Troops = 5, Growth = 1, GDP = 0, Trade = 1, Population = 0, Regime = 3, Conflict = 1, Ally = 3),
+               y = c(Protest = 6, Troops = 4, Growth = 4, GDP = 5, Trade = 2, Population = 7, Regime = 8, Conflict = 8, Ally = 4))
+
+daglabels <- c(Protest = "Protest", Troops = "Troops[t-1]", Growth = "Growth", GDP = "GDP", Trade = "Trade", Population = "Population BIG", Regime = "Regime Type", Conflict = "War", Ally = "Alliance")
+
+dagbase <- dagify(Protest ~ Troops + Growth + Population + Regime + Conflict,
+                  Troops ~ Regime + Conflict + Ally + Trade,
+                  Ally ~ Trade + GDP + Regime,
+                  Trade ~ Ally + GDP + Regime,
+                  GDP ~ Trade + Population + Conflict,
+                  Growth ~ Conflict + Trade + GDP,
+                  Regime ~ Conflict,
+                  exposure = "Troops",
+                  outcome = "Protest",
+                  coords = coords,
+                  labels = daglabels) %>% 
+  tidy_dagitty() 
+
+ggdag(dagbase)
+
+dagbase2 <- dagitty(' dag{
+                    "Troops[t]" [exposure]
+                    "Protest[t]" [outcome]
+                    
+                    "Protest[t-1]" [pos="1,0"]
+                    "Troops[t-1]" [pos = "0,-0.5"]
+                    "Threat[t-1]" [pos="-1.1,1.5"]
+                    "Growth[t-1]" [pos="-1,3"]
+                    "Population[t-1]" [pos="-1.25,0"]
+                    "Regime[t-1]" [pos="-1.25,-1.5"]
+                    "GDP[t-1]" [pos="-1.1,-3"]
+                    "Rebellion[t-1]" [pos="-0.75,-6"]
+                    "Trade[t-1]" [pos="-0.5,-7"]
+                    "Ally[t-1]" [pos="-1,-4.5"]
+                    "Alignment[t-1]" [pos="-0.75,4.5"]
+                    "ProtestEnvironment[t-1]" [pos="0,6"]
+                    "USWar[t-1]" [pos="0,-8"]
+
+                    "Protest[t]" [pos="5,0"]
+                    "Troops[t]" [pos = "4,-0.5"]
+                    "Threat[t]" [pos="2.9,1.5"]
+                    "Growth[t]" [pos="3,3"]
+                    "Population[t]" [pos="2.75,0"]
+                    "Regime[t]" [pos="2.75,-1.5"]
+                    "GDP[t]" [pos="2.9,-3"]
+                    "Rebellion[t]" [pos="3.25,-6"]
+                    "Trade[t]" [pos="3.5,-7"]
+                    "Ally[t]" [pos="3,-4.5"]
+                    "Alignment[t]" [pos="3.25,4.5"]
+                    "ProtestEnvironment[t]" [pos="4,6"]
+                    "USWar[t]" [pos="4,-8"]
+                    
+                    "Protest[t-1]" -> "Protest[t]"
+                    "ProtestEnvironment[t-1]" -> "ProtestEnvironment[t]"
+                    "Troops[t-1]" -> "Troops[t]"
+                    "Population[t-1]" -> "Population[t]"
+                    "Regime[t-1]" -> "Regime[t]"
+                    "Threat[t-1]" -> "Threat[t]"
+                    "GDP[t-1]" -> "GDP[t]"
+                    "Growth[t-1]" -> "Growth[t]"
+                    "Rebellion[t-1]" -> "Rebellion[t]"
+                    "Trade[t-1]" -> "Trade[t]"
+                    "Ally[t-1]" -> "Ally[t]"
+                    "Alignment[t-1]" -> "Alignment[t]"
+                    "ProtestEnvironment[t-1]" -> "ProtestEnvironment[t]"
+                    "USWar[t-1]" -> "USWar[t]"
+                    
+                    
+                    "Regime[t]" -> {"Troops[t]" "ProtestEnvironment[t]" "Trade[t]" "Rebellion[t]" "Alignment[t]" "USWar[t]"}
+                    "Threat[t]" ->  {"Troops[t]" "Alignment[t]"}
+                    "Population[t]" -> "ProtestEnvironment[t]"
+                    "Population[t]" -> {"GDP[t]" "Trade[t]"}
+                    "Troops[t]" -> {"Protest[t]" "Growth[t]"}
+                    "Growth[t]" -> {"ProtestEnvironment[t]" "Protest[t]" "Rebellion[t]"}
+                    "Ally[t]" -> {"Troops[t]" "Protest[t]" "Trade[t]" "USWar[t]"}
+                    "Trade[t]" -> {"GDP[t]"}
+                    "GDP[t]" -> {"Trade[t]" "Rebellion[t]"}
+                    "Alignment[t]" -> {"Ally[t]" "USWar[t]" "Protest[t]"}
+                    "ProtestEnvironment[t]" -> {"Rebellion[t]" "Protest[t]"}
+                    "USWar[t]" -> {"Protest[t]" "Protest[t]"}
+                    "Rebellion[t]" -> {"Protest[t]"}
+
+
+                    "Regime[t-1]" -> {"Troops[t-1]" "ProtestEnvironment[t-1]" "Trade[t-1]" "Rebellion[t-1]" "Alignment[t-1]" "USWar[t-1]"}
+                    "Threat[t-1]" ->  {"Troops[t-1]" "Alignment[t-1]"}
+                    "Population[t-1]" -> "ProtestEnvironment[t-1]"
+                    "Population[t-1]" -> {"GDP[t-1]" "Trade[t-1]"}
+                    "Troops[t-1]" -> {"Protest[t-1]" "Growth[t-1]"}
+                    "Growth[t-1]" -> {"ProtestEnvironment[t-1]" "Protest[t-1]" "Rebellion[t-1]"}
+                    "Ally[t-1]" -> {"Troops[t-1]" "Protest[t-1]" "Trade[t-1]" "USWar[t-1]"}
+                    "Trade[t-1]" -> {"GDP[t-1]"}
+                    "GDP[t-1]" -> {"Trade[t-1]" "Rebellion[t-1]"}
+                    "Alignment[t-1]" -> {"Ally[t-1]" "USWar[t-1]" "Protest[t-1]"}
+                    "ProtestEnvironment[t-1]" -> {"Rebellion[t-1]" "Protest[t-1]"}
+                    "USWar[t-1]" -> {"Protest[t-1]" "Protest[t-1]"}
+                    "Rebellion[t-1]" -> {"Protest[t-1]"}
+
+
+                    "Troops[t-1]" -> "Protest[t]"
+                    "USWar[t-1]" -> "Troops[t]"
+
+                    }') 
+
+dagbasetidy <- tidy_dagitty(dagbase2)
+
+dagbase2 %>% 
+  tidy_dagitty() %>% 
+  ggplot(aes(x = x, y = y, xend = xend, yend = yend)) + 
+    geom_dag_edges_arc(curvature = 0.05) +
+    geom_dag_text(parse = TRUE, color = "black", size = 4) +
+    theme_dag_blank()
+
+ggsave(here("/Figures/Chapter-Protests", "figure-protest-dag-troops.png"))
+
+
+adjustmentSets(dagbase2)
+
+
+
+
+
+# Prettier DAG for public consumption in text
+
+dag.pretty <- dagitty(' dag{
+                    "Troops[t]" [exposure]
+                    "Protest[t]" [outcome]
+                    
+                    "Protest[t]" [pos="1,1"]
+                    "Troops[t]" [pos = "0,0"]
+                    "Z[t]" [pos="0,2"]
+                    
+                    "Protest[t-1]" [pos="-1,1"]
+                    "Troops[t-1]" [pos = "-2,0"]
+                    "Z[t-1]" [pos="-2,2"]
+
+                    "Protest[t-1]" -> "Protest[t]"
+                    "Troops[t]" -> "Protest[t]"
+                    "Troops[t-1]" -> "Troops[t]"
+                    "Troops[t-1]" -> "Protest[t-1]"
+                    "Z[t-1]" -> "Z[t]"
+                    "Z[t]" -> "Troops[t]"
+                    
+                    "Troops[t-1]" -> "Protest[t]"
+                    "Z[t-1]" -> "Troops[t-1]"
+                    "Z[t-1]" -> "Protest[t-1]"
+                    "Z[t]" -> "Protest[t]"
+
+                    }') 
+
+
+dag.pretty.tidy <- tidy_dagitty(dag.pretty) %>% 
+  mutate(.$data, 
+         vartype = case_when(
+           name == "Troops[t]" ~ "Exposure",
+           name == "Protest[t]" ~ "Outcome",
+           grepl("Z", name) ~ "Confounders",
+           name == "Troops[t-1]" ~ "Lagged Treatment",
+           name == "Protest[t-1]" ~ "Lagged Outcome"
+
+         )) %>% 
+  dag_label(labels = c("Troops[t]" = "Troops[t]", "Troops[t-1]" = "Troops[t-1]", "Protest[t-1]" = "Protest[t-1]",
+                       "Protest[t]" = "Protest[t]", "Z[t]" = "Z[t]", "Z[t-1]" = "Z[t-1]")) 
+
+ 
+chart <- ggplot(dag.pretty.tidy, aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_dag_point(aes(color = vartype)) +
+  geom_dag_edges() +
+  geom_dag_label_repel(aes(label = label), parse = TRUE) +
+  theme_dag_blank() +
+  guides(color = FALSE) +
+  scale_color_manual(values = c("orange",  "#009E73", muted("dodgerblue1"), muted("009E73"), "dodgerblue1"))
+
+
+
+ggsave(here("Figures/Chapter-Protests/fig-dag-protest-simple.png"), width = 8, height = 5, units = "in")
+
+```
+
+# Construct Propensity Score Weights
+
+```{r propensity scores and weights, echo = FALSE}
+
+
+ITER = 5000
+WARMUP = 2500
+CHAINS = 4
+CORES = 4
+SEED = 66502
+
+PRIOR = set_prior("normal(0,2)", class = "b")
+
+
+tic()
+m.numerator <- brm(troops ~ log_troops_lag + log_troops_cumsum_z + (1 | ccode),
+                   hu ~ log_troops_lag + log_troops_cumsum_z + (1 | ccode),
+                   data = p.data,
+                   prior = PRIOR,
+                   family = hurdle_lognormal(),
+                   iter = ITER,
+                   warmup = WARMUP,
+                   chains = CHAINS,
+                   cores = CORES,
+                   seed = SEED,
+                   control = list(adapt_delta = 0.80,
+                                          max_treedepth = 13),
+                   backend = "cmdstanr")
+
+toc()
+
+num.check <- brms::pp_check(m.numerator)
+
+  num.check +
+    scale_x_continuous(trans = "log1p")
+
+# Adjustment set
+# { Alignment[t], Ally[t], GDP[t], Growth[t-1], Population[t], ProtestEnvironment[t-1], Protest[t-1], Rebellion[t-1], Regime[t], Troops[t-1], USWar[t] }
+
+m.denominator <-  brm(troops ~ log_troops_lag + log_troops_cumsum_z + idealdistance_2_z + us_ally + gdp_z + gdp_growth_z + pop_z + log(protest_other+1) + anti_us_protest_lag + lag(conflict_dummy) + v2x_polyarchy_z + us_war + (1 | ccode),
+                      hu ~ log_troops_lag + log_troops_cumsum_z + idealdistance_2_z + us_ally + gdp_z + gdp_growth_z + pop_z + log(protest_other+1) + anti_us_protest_lag + lag(conflict_dummy) + v2x_polyarchy_z + us_war + (1 | ccode),
+                   data = p.data,
+                   prior = PRIOR,
+                   family = hurdle_lognormal(),
+                   iter = ITER,
+                   warmup = WARMUP,
+                   chains = CHAINS,
+                   cores = CORES,
+                   seed = SEED,
+                   control = list(adapt_delta = 0.80,
+                                          max_treedepth = 13),
+                   backend = "cmdstanr")
+
+den.check <- brms::pp_check(m.denominator)
+
+den.check + 
+  scale_x_continuous(trans = "log1p")
+
+
+#### Numerator and Denominator 
+
+p.data$numerator <- dnorm(x = p.data$log_troops_z, 
+                                      mean = predict(m.numerator, newdata = p.data, allow_new_levels = TRUE)[, 1], 
+                                      sd = sd(residuals(m.numerator, newdata = p.data, allow_new_levels = TRUE)[, 1], na.rm = TRUE))
+
+p.data$denominator <- dnorm(x = p.data$log_troops_z, 
+                                        mean = predict(m.denominator, newdata = p.data, allow_new_levels = TRUE)[, 1], 
+                                        sd = sd(residuals(m.denominator, newdata = p.data, allow_new_levels = TRUE)[, 1], na.rm = TRUE))
+
+p.data <- p.data %>% 
+  mutate(iptw = numerator/denominator) %>% 
+  group_by(ccode) %>% 
+  mutate(iptw.prod = cumprod(replace(iptw, is.na(iptw), 1)),
+         iptw.10 = ifelse(iptw.prod > 10, 10, iptw.prod),
+         iptw.50 = ifelse(iptw.prod > 50, 50, iptw.prod),
+         iptw.500 = ifelse(iptw.prod > 500, 500, iptw.prod),
+         iptw.1000 = ifelse(iptw.prod > 1000, 1000, iptw.prod),
+         iptw.5000 = ifelse(iptw.prod > 5000, 5000, iptw.prod),
+         iptw.10000 = ifelse(iptw.prod > 10000, 10000, iptw.prod))
+
+
+
+iptw.10.df <- p.data %>% dplyr::select(ccode, anti_us_protest, anti_us_mil, log_troops_z, log_troops_cumsum_z, iptw.10) 
+iptw.50.df <- p.data %>% dplyr::select(ccode, anti_us_protest, anti_us_mil, log_troops_z, log_troops_cumsum_z, iptw.50) 
+iptw.500.df <- p.data %>% dplyr::select(ccode, anti_us_protest, anti_us_mil, log_troops_z, log_troops_cumsum_z, iptw.500) 
+iptw.1000.df <- p.data %>% dplyr::select(ccode, anti_us_protest, anti_us_mil, log_troops_z, log_troops_cumsum_z, iptw.1000) 
+iptw.5000.df <- p.data %>% dplyr::select(ccode, anti_us_protest, anti_us_mil, log_troops_z, log_troops_cumsum_z, iptw.5000) 
+iptw.10000.df <- p.data %>% dplyr::select(ccode, anti_us_protest, anti_us_mil, log_troops_z, log_troops_cumsum_z, iptw.10000) 
+#iptw.100000.df <- p.data %>% dplyr::select(ccode, anti_us_protest, anti_us_mil, log_troops_z, log_troops_cumsum_z, iptw.100000) 
+
+iptw.list <- list(iptw.10.df, iptw.50.df, iptw.500.df, iptw.1000.df, iptw.5000.df, iptw.10000.df)
+
+iptw.list <- lapply(iptw.list, function(x) {setNames(x, gsub(".*iptw.*", "iptw", names(x)))})
+
+save(iptw.list, file = here("Data/Chapter-Protests/treatment-weight.RData"))
+
+```
+
+# Country-Year Models
+
+## Anti-U.S. protest models
+
+### NBREG
+
+These models look at the average treatment effect of U.S. deployments
+
+```{r ATE protest models, echo = FALSE}
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+load(here("Data/Chapter-Protests/treatment-weight.RData"))
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+PRIOR <- c(set_prior("normal(0, 1)", class = "b", coef = "log_troops_z"),
+           set_prior("normal(0, 2)", class = "b", coef = "log_troops_cumsum_z"),
+           set_prior("normal(0, 2)", class = "Intercept"),
+           set_prior("gamma(0.01, 0.01)", class = "shape"))
+
+ITER <- 5000
+WARMUP <-  2500
+CORES <- 4
+CHAINS <- 4
+THIN <- 1
+SEED <- 66502
+
+#### Anti-U.S. Protest Models with different IPTW scores ####
+#### Note that the cumulative sum is for a two period lag ####
+
+ate.troops <- bf(anti_us_protest | weights(iptw) ~ log_troops_z + log_troops_cumsum_z + (1 | ccode))
+
+us.ate.com <- brm_multiple(ate.troops,
+                           data = iptw.list,
+                           family = negbinomial(),
+                           combine = FALSE,
+                           iter = ITER,
+                           warmup = WARMUP,
+                           prior = PRIOR,
+                           chains = CHAINS,
+                           cores = CORES,
+                           thin = THIN,
+                           seed = SEED,
+                           control = list(adapt_delta = 0.85,
+                                          max_treedepth = 13),
+                           backend = "cmdstanr")
+
+save(us.ate.com, file = here("Output/Chapter-Protests/us.ate.com.RData"))
+
+
+
+
+#### Anti-U.S. Military Protest Models with different IPTW scores ####
+#### Note that the cumulative sum is for a two period lag ####
+
+ate.troops.mil <- bf(anti_us_mil | weights(iptw) ~ log_troops_z + log_troops_cumsum_z + (1 | ccode))
+
+mil.ate.com <- brm_multiple(ate.troops.mil,
+                           data = iptw.list,
+                           family = negbinomial(),
+                           combine = FALSE,
+                           iter = ITER,
+                           warmup = WARMUP,
+                           prior = PRIOR,
+                           chains = CHAINS,
+                           cores = CORES,
+                           thin = THIN,
+                           seed = SEED,
+                           control = list(adapt_delta = 0.85,
+                                          max_treedepth = 13),
+                           backend = "cmdstanr")
+
+save(mil.ate.com, file = here("Output/Chapter-Protests/mil.ate.com.RData"))
+
+
+```
+
+### Figures for Average Treatment Effect
+
+```{r Average Treatment Effect Figures}
+
+load(here("/Output/Chapter-Protests/us.ate.com.RData"))
+load(here("/Output/Chapter-Protests/mil.ate.com.RData"))
+
+# Anti-U.S. Protest Events
+ate.10 <- us.ate.com[[1]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "10",
+         model = "Anti-U.S. Protests")
+
+ate.50 <- us.ate.com[[2]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "50",
+         model = "Anti-U.S. Protests")
+
+ate.500 <- us.ate.com[[3]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "500",
+         model = "Anti-U.S. Protests")
+
+ate.1000 <- us.ate.com[[4]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "1000",
+         model = "Anti-U.S. Protests")
+
+ate.5000 <- us.ate.com[[5]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "5000",
+         model = "Anti-U.S. Protests")
+
+ate.10000 <- us.ate.com[[6]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "10000",
+         model = "Anti-U.S. Protests")
+
+
+
+
+# Anti-U.S. Military Protest Events
+mil.ate.10 <- mil.ate.com[[1]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "10",
+         model = "Anti-U.S. Military Protests")
+
+mil.ate.50 <- mil.ate.com[[2]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "50",
+         model = "Anti-U.S. Military Protests")
+
+mil.ate.500 <- mil.ate.com[[3]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "500",
+         model = "Anti-U.S. Military Protests")
+
+mil.ate.1000 <- mil.ate.com[[4]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "1000",
+         model = "Anti-U.S. Military Protests")
+
+mil.ate.5000 <- mil.ate.com[[5]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "5000",
+         model = "Anti-U.S. Military Protests")
+
+mil.ate.10000 <- mil.ate.com[[6]] %>% 
+  gather_draws(b_log_troops_z,
+               b_log_troops_cumsum_z,
+               n = 10000) %>% 
+  mutate(iptw = "10000",
+         model = "Anti-U.S. Military Protests")
+
+
+
+ate.fig.com <- bind_rows(ate.10, ate.50, ate.500, ate.1000, ate.5000, ate.10000, mil.ate.10, mil.ate.50, mil.ate.500, mil.ate.1000, mil.ate.5000, mil.ate.10000) %>% 
+  mutate(iptw = factor(iptw, levels = c("10", "50", "500", "1000", "5000", "10000")),
+         varname = factor(.variable, levels = c("b_log_troops_z", "b_log_troops_cumsum_z"), labels = c("Contemporaneous Effect", "Treatment History")),
+         group = paste(model, ", ", varname, sep = ""),
+         .variable = "")
+
+
+#### Plot Troops ATE on Protest ####
+ggplot(ate.fig.com, aes(x = .value, y = .variable, group = iptw)) +
+  stat_dotsinterval(quantiles = 1000,  
+                    stat = median_hdi,
+                    .width = c(0.50, 0.80, 0.95),
+                    position = position_dodge(width = 1), 
+                    interval_color = "black",
+                    interval_fill = "black",
+                    point_color = "black",
+                    point_fill = "black",
+                    point_size = 1.2,
+                    aes(fill = iptw,
+                        color = iptw,
+                        slab_fill = iptw,
+                        slab_color = iptw)) +
+  geom_vline(xintercept = 0) +
+  facet_wrap(. ~ group, ncol = 1) +
+  theme_flynn +
+  theme(axis.ticks.y = element_blank()) +
+  guides(interval_color = FALSE,
+         interval_fill = FALSE,
+         point_color = FALSE,
+         point_fill = FALSE,
+         fill = FALSE,
+         color = FALSE,
+         slab_color = guide_legend(reverse = TRUE),
+         slab_fill = guide_legend(reverse = TRUE)) +
+  labs(x = "ATE Estimate",
+       y = "",
+       slab_color = "IPTW Truncation\nPoint",
+       slab_fill = "IPTW Truncation\nPoint",
+       title = "Average Treatment Effect Estimate for U.S. Troop Deployments")
+
+
+  ggsave(here("Figures/Chapter-Protests/figure-ate-troops.pdf"), device = cairo_pdf())
+  ggsave(here("Figures/Chapter-Protests/figure-ate-troops.png"), dpi = 400)
+
+
+```
+
+
+
+### Book Country Models
+
+```{r anti-us models}
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+VAGUEPRIOR <- c(set_prior("normal(0, 2)", class = "b"),
+                set_prior("normal(0, 10)", class = "Intercept"))
+
+ITER <- 3000
+WARMUP <-  1500
+CORES <- 4
+CHAINS <- 4
+THIN <- 1
+SEED <- 66502
+
+
+
+# Base model
+us.1 <- brm(anti_us_protest ~ log_troops_z +
+              v2x_polyarchy_z +
+              gdp_z + 
+              gdp_growth_z +
+              pop_z +
+              protest_other_z +
+              conflict_dummy +
+              us_war + 
+              us_war_w_mean +
+              us_ally + 
+              defburden_w_mean_z +
+              anti_us_protest_w_mean_z + 
+              (1 | ccode),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.85),
+              backend = "cmdstanr",
+            file = here::here("Output/Chapter-Protests", "us.1.base"))
+
+# Interaction model
+us.2 <- brm(anti_us_protest ~ log_troops_z +
+              v2x_polyarchy_z +
+              v2x_polyarchy_z_sq +
+              gdp_z + 
+              gdp_growth_z +
+              log_troops_z:gdp_growth_z +
+              pop_z +
+              protest_other_z +
+              conflict_dummy +
+              us_war + 
+              us_war_w_mean +
+              us_ally + 
+              defburden_w_mean_z +
+              anti_us_protest_w_mean_z + 
+              (1 | ccode),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.85),
+            backend = "cmdstanr",
+            file = here::here("Output/Chapter-Protests", "us.2.base"))
+
+
+mil.1 <- brm(anti_us_mil ~ log_troops_z +
+              v2x_polyarchy_z +
+              gdp_z + 
+              gdp_growth_z +
+              pop_z +
+              protest_other_z +
+              conflict_dummy +
+              us_war + 
+              us_war_w_mean +
+              us_ally + 
+              defburden_w_mean_z +
+              anti_us_protest_w_mean_z + 
+              (1 | ccode),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.85),
+            backend = "cmdstanr",
+            file = here::here("Output/Chapter-Protests", "mil.1.base"))
+
+# Base model
+mil.2 <- brm(anti_us_mil ~ log_troops_z +
+              v2x_polyarchy_z +
+              v2x_polyarchy_z_sq +
+              gdp_z + 
+              gdp_growth_z +
+              log_troops_z:gdp_growth_z +
+              pop_z +
+              protest_other_z +
+              conflict_dummy +
+              us_war + 
+              us_war_w_mean +
+              us_ally + 
+              defburden_w_mean_z +
+              anti_us_protest_w_mean_z + 
+              (1 | ccode),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.85),
+            backend = "cmdstanr",
+            file = here::here("Output/Chapter-Protests", "mil.2.base"))
+
+
+```
+
+Making tables for the basic regression tables
+
+```{r tables}
+
+us.1.base <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/us.1.base.rds")
+us.2.base <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/us.2.base.rds")
+mil.1.base <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/mil.1.base.rds")
+mil.2.base <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/mil.2.base.rds")
+
+model.list <- list(us.1.base, us.2.base, mil.1.base, mil.2.base)
+
+tic()
+loo.1 <- loo(us.1.base)
+loo.2 <- loo(us.2.base)
+loo.3 <- loo(mil.1.base)
+loo.4 <- loo(mil.2.base)
+toc()
+
+
+class(model.list[[1]]) = c("custom", class(model.list[[1]]))
+class(model.list[[2]]) = c("custom", class(model.list[[2]]))
+class(model.list[[3]]) = c("custom", class(model.list[[3]]))
+class(model.list[[4]]) = c("custom", class(model.list[[4]]))
+
+addedrows <- tribble(~term, ~`Model 1`, ~`Model 2`, ~`Model 3`, ~`Model 4`,
+                     "LOOIC", loo.1[["estimates"]][[3]], loo.2[["estimates"]][[3]], loo.3[["estimates"]][[3]], loo.4[["estimates"]][[3]])
+  
+
+coef.list <- c("log_troops_z" = "Troop Deployment", "v2x_polyarchy_z" = "Polyarchy Score", "v2x_polyarchy_z_sq" = "Polyarchy Squared",
+               "gdp_z" = "GDP", "gdp_growth_z" = "Growth", "log_troops_z:gdp_growth_z" = "Troop Deployment × Growth", "pop_z" = "Population",
+               "protest_other_z" = "Protest Environment", "conflict_dummy" = "Domestic Conflict", "us_war" = "U.S. War", "us_war_w_mean" = "U.S. War (Spatial)", "us_ally" = "U.S. Ally", "defburden_w_mean_z" = "Regional Security Environment", "anti_us_protest_w_mean_z" = "Anti-U.S. Protests (Spatial)", "(Intercept)" = "Intercept")
+
+tidy.custom = broom.mixed:::tidy.brmsfit
+
+glance.custom = function(x, ...) {
+  ret <- data.frame(
+    "Link" = x$family$link,
+    "Family" = x$family$family,
+    "N" = nrow(x$data),
+    `Num Groups (Country)` = summary(x)$ngrps$ccode,
+    "Std. Dev. Country" = summary(x)$random$ccode[1]
+  )
+  colnames(ret) <- c("Link", "Family", "N", "Num Groups (Country)", "Std. Dev. Country")
+  ret
+}
+
+
+reg.tables.1 <- modelsummary(model.list,
+                           statistic = "conf.int",
+                           stars = FALSE,
+                           coef_map = coef.list,
+                           add_rows = addedrows,
+                           caption = "Bayesian multilevel negative binomial regressions modeling anti-U.S. protest events \\label{tab:antiusprotesteventmodels}",
+                           output = "latex") 
+
+reg.tables.2 <- reg.tables.1 %>%  
+  kable_styling(latex_options = c("striped", "repeat_header"), protect_latex = TRUE, font_size = 8, position = "center") %>% 
+  add_header_above(c(" ", "Anti-U.S." = 2, "Anti-U.S. Military" = 2)) %>% 
+  save_kable(., file = here("Tables/Chapter-Protests/model-country-protest-descriptive.tex"),
+             keep_tex = TRUE)
+
+
+
+```
+
+#### Posterior Predictive Checks
+
+```{r}
+NSAMPLES <- 1000
+
+p_value <- function(x) mean(x > max(y), na.rm = TRUE)
+
+# Posterior Predictive Checks
+y <- p.data %>% 
+  dplyr::select(anti_us_protest) %>% 
+  filter(!is.na(anti_us_protest)) %>% 
+  as.vector()
+
+y.max = max(y)
+
+y.rep.1 <- brms::posterior_predict(us.1.base, nsamples = NSAMPLES)
+
+
+p.value.us.1 <- apply(y.rep.1, 1, p_value) %>% 
+  as.data.frame() %>%
+  dplyr::rename("x" = 1) %>% 
+  mutate(above = ifelse(x > 0, 1, 0)) %>% 
+  dplyr::summarise(pvalue = sum(above, na.rm = TRUE)/1000)
+
+hist(p.value.us.1)
+
+```
+
+
+
+### Country Model Coefficient Plots
+
+```{r country coefficient plots} 
+
+
+coefplot.us.1 <- us.1 %>% 
+  gather_draws(`b_.*`, regex = TRUE) %>% 
+  filter(.variable != "b_Intercept") %>% 
+  mutate(model = "Model 1",
+         DV = "Anti-U.S. Protest",
+         group = paste(DV, model, sep = ": "))
+
+coefplot.us.2 <- us.2 %>% 
+  gather_draws(`b_.*`, regex = TRUE) %>% 
+  filter(.variable != "b_Intercept") %>% 
+  mutate(model = "Model 2",
+         DV = "Anti-U.S. Protest",
+         group = paste(DV, model, sep = ": "))
+
+coefplot.mil.1 <- mil.1 %>% 
+  gather_draws(`b_.*`, regex = TRUE) %>% 
+  filter(.variable != "b_Intercept") %>% 
+  mutate(model = "Model 3",
+         DV = "Anti-U.S. Military",
+         group = paste(DV, model, sep = ": "))
+
+coefplot.mil.2 <- mil.2 %>% 
+  gather_draws(`b_.*`, regex = TRUE) %>% 
+  filter(.variable != "b_Intercept") %>% 
+  mutate(model = "Model 4",
+         DV = "Anti-U.S. Military",
+         group = paste(DV, model, sep = ": "))
+
+coefplot.combined <- bind_rows(coefplot.us.1, coefplot.us.2, coefplot.mil.1, coefplot.mil.2) %>% 
+  mutate(group = factor(group, levels = c("Anti-U.S. Protest: Model 1", "Anti-U.S. Protest: Model 2", "Anti-U.S. Military: Model 3", "Anti-U.S. Military: Model 4"))) %>% 
+  mutate(.variable = case_when(
+    .variable == "b_v2x_polyarchy_z" ~ "Polyarchy",
+    .variable == "b_v2x_polyarchy_z_sq" ~ "Polyarchy Squared",
+    .variable == "b_gdp_z" ~ "GDP",
+    .variable == "b_gdp_growth_z" ~ "Growth",
+    .variable == "b_log_troops_z" ~ "Troops",
+    .variable == "b_log_troops_z:gdp_growth_z" ~ "Troops X Growth",
+    grepl("pop", .variable) ~ "Population",
+    grepl("protest_other", .variable) ~ "Protest Environment",
+    grepl("conflict_dummy", .variable) ~ "Domestic Conflict",
+    grepl("us_war_w_mean", .variable) ~ "U.S. War (Spatial)",
+    grepl("us_war", .variable) ~ "U.S. War",
+    grepl("us_ally", .variable) ~ "U.S. Ally",
+    grepl("defburden_w_mean_z", .variable) ~ "Regional Security Environment",
+    grepl("anti_us_protest_w_mean_z", .variable) ~ "Anti-U.S. Protest (Spatial)",
+  ))
+
+
+ggplot(coefplot.combined, aes(x = .value, y = .variable, color = group, group = group)) +
+  ggdist::stat_pointinterval(.width = c(0.50, 0.80, 0.95), position = position_dodge(width = 0.7)) +
+  geom_vline(xintercept = 0, width = 1, color = "red") +
+  scale_color_brewer(palette = "Set2") +
+  theme_flynn +
+  labs(x = "Coefficient Estimate",
+       y = "",
+       color = "Model")
+
+ggsave(here("Figures/Chapter-Protests/fig-country-coefficients.png"), width = 8, height = 6, units = "in")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+These models focus on anti-U.S. protests, broadly. Model specifications
+are as follows:
+
+1.  Full model with varying intercepts and AR1 correction
+2.  Full model with varying intercepts and no AR1 correction
+3.  Full model curvilinear regime type variable
+4.  Full model with interactions between troops and economic growth and
+    democratization
+
+```{r U.S. Protest NBREG Models}
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+VAGUEPRIOR <- c(set_prior("normal(0, 2)", class = "b"),
+                set_prior("normal(0, 10)", class = "Intercept"))
+
+ITER <- 5000
+WARMUP <-  2000
+CORES <- 2
+CHAINS <- 2
+THIN <- 1
+SEED <- 66502
+
+
+
+# Base model
+us.1 <- brm(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+              (1 | ccode) +
+              ar(time = year, gr = ccode, p = 1, cov = TRUE), 
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.9),
+            file = here::here("Output/Chapter-Protests", "us.1"))
+
+
+# Base model no AR1 term
+us.2 <- brm(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+              (1 | ccode), 
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.9),
+            file = here::here("Output/Chapter-Protests", "us.2"))
+
+
+# Base Model
+# Nor AR1
+# Curvilinear regime type variables
+us.3 <- brm(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              v2x_polyarchy_c_mean_z_sq + v2x_polyarchy_c_demeaned_z_sq +
+              exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+              (1 | ccode), 
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.85),
+            file = here::here("Output/Chapter-Protests", "us.3"))
+
+
+
+# No AR1
+# Interaction between troops and democratic change variable and economic growth
+us.4 <- brm(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              troops_c_mean_z:v2x_polyarchy_change_c_mean_z + troops_c_demeaned_z:v2x_polyarchy_change_c_demeaned_z +
+              troops_c_mean_z:gdp_growth_c_mean_z + troops_c_demeaned_z:gdp_growth_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              v2x_polyarchy_change_c_mean_z + v2x_polyarchy_change_c_demeaned_z +
+              exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+              (1 | ccode), 
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.85),
+            file = here::here("Output/Chapter-Protests", "us.4"))
+
+
+
+
+
+```
+
+### Zero-Inflated Models
+
+### Mean centered models
+
+```{r mean-centered models}
+
+# Conflicted package really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+VAGUEPRIOR <- c(set_prior("cauchy(0, 10)", class = "b"),
+                set_prior("cauchy(0, 20)", class = "Intercept"))
+
+ITER <- 10000
+WARMUP <-  5000
+CORES <- 4
+CHAINS <- 4
+THIN <- 1
+SEED <- 66502
+
+# Base model no AR1 term with centered variables only
+us.zi.1.cent <- brm(bf(anti_us_protest ~ troops_z +
+                        troops_w_mean_z + 
+                        v2x_polyarchy_z + 
+                        gdp_z + 
+                        pop_z + 
+                        us_war +
+                        us_ally +
+                        anti_us_protest_w_mean_z_lag + 
+                        ar(time = year, gr = ccode, p = 1, cov = TRUE) +
+                        (1 | ccode), 
+                      zi ~ troops_z + 
+                        v2x_polyarchy_z +
+                        idealdistance_2_z +
+                        (1 | ccode)),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = zero_inflated_negbinomial(),
+            control = list(adapt_delta = 0.95,
+                           max_treedepth = 10),
+            file = here::here("Output/Chapter-Protests", "us.zi.1.cent"))
+
+# Base model no AR1 term with centered variables only
+us.zi.2.cent <- brm(bf(anti_us_protest ~ troops_z +
+              troops_w_mean_z + 
+              v2x_polyarchy_z + 
+              gdp_z + 
+              pop_z + 
+              us_war +
+              us_ally +
+              anti_us_protest_w_mean_z_lag + 
+              (1 | ccode), 
+            zi ~ troops_z + 
+              v2x_polyarchy_z +
+              idealdistance_2_z +
+              (1 | ccode)),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = zero_inflated_negbinomial(),
+            control = list(adapt_delta = 0.95,
+                           max_treedepth = 10),
+            file = here::here("Output/Chapter-Protests", "us.zi.2.cent"))
+
+
+# Base Model
+# No AR1 term
+# Curvilinear regime type
+us.zi.3.cent <- brm(bf(anti_us_protest ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         v2x_polyarchy_z_sq +
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         anti_us_protest_w_mean_z_lag + 
+                         (1 | ccode), 
+                       zi ~ troops_z + 
+                         v2x_polyarchy_z +
+                         idealdistance_2_z +
+                         (1 | ccode)),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = zero_inflated_negbinomial(),
+            control = list(adapt_delta = 0.95,
+                           max_treedepth = 10),
+            file = here::here("Output/Chapter-Protests", "us.zi.3.cent"))
+
+
+# Base Model
+# No AR1 term
+# Curvilinear regime type
+us.zi.4.cent <- brm(bf(anti_us_protest ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         gdp_growth_z + 
+                         troops_z:gdp_growth_z +
+                         troops_z:v2x_polyarchy_change_z +
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         anti_us_protest_w_mean_z_lag + 
+                         (1 | ccode), 
+                       zi ~ troops_z + 
+                         v2x_polyarchy_z +
+                         idealdistance_2_z +
+                         (1 | ccode)),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = zero_inflated_negbinomial(),
+            control = list(adapt_delta = 0.95,
+                           max_treedepth = 10),
+            file = here::here("Output/Chapter-Protests", "us.zi.4.cent"))
+
+
+# Base Model
+# No AR1 term
+# Curvilinear regime type
+us.zi.5.cent <- brm(bf(anti_us_protest ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         gdp_growth_z + 
+                         troops_z:gdp_growth_z +
+                         troops_z:v2x_polyarchy_change_z +
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         anti_us_protest_w_mean_z_lag + 
+                         (1 | ccode), 
+                       zi ~ troops_z + 
+                         v2x_polyarchy_z +
+                         idealdistance_2_z +
+                         (1 | ccode),
+                       shape ~ troops_z + 
+                         (1 | ccode)),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = zero_inflated_negbinomial(),
+            control = list(adapt_delta = 0.92,
+                           max_treedepth = 10),
+            file = here::here("Output/Chapter-Protests", "us.zi.5.cent"))
+
+```
+
+### Within-Between Models
+
+```{r U.S. Protest ZINBREG Models}
+
+
+# Conflicted package really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+VAGUEPRIOR <- c(set_prior("cauchy(0, 10)", class = "b"),
+                set_prior("cauchy(0, 20)", class = "Intercept"))
+
+ITER <- 8000
+WARMUP <-  4000
+CORES <- 4
+CHAINS <- 4
+THIN <- 1
+SEED <- 66502
+
+
+
+# Base model
+us.zi.1 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+              (1 | ccode) +
+              ar(time = year, gr = ccode, p = 1, cov = TRUE),
+            zi ~ troops_c_mean_z + troops_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = zero_inflated_negbinomial(),
+            control = list(adapt_delta = 0.90,
+                           max_treedepth = 12),
+            file = here::here("Output/Chapter-Protests", "us.zi.1"))
+
+
+
+
+# Base model no AR1 term
+us.zi.2 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+              (1 | ccode), 
+            zi ~ troops_c_mean_z + troops_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = zero_inflated_negbinomial(),
+            control = list(adapt_delta = 0.90,
+                           max_treedepth = 12),
+            file = here::here("Output/Chapter-Protests", "us.zi.2"))
+
+
+# Base Model
+# Nor AR1
+# Curvilinear regime type variables
+us.zi.3 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              v2x_polyarchy_c_mean_z_sq + v2x_polyarchy_c_demeaned_z_sq +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+              (1 | ccode), 
+            zi ~ troops_c_mean_z + troops_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = zero_inflated_negbinomial(),
+            control = list(adapt_delta = 0.90,
+                           max_treedepth = 12),
+            file = here::here("Output/Chapter-Protests", "us.zi.3"))
+
+
+
+# No AR1
+# Interaction between troops and democratic change variable and economic growth
+us.zi.4 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              troops_c_mean_z:v2x_polyarchy_change_c_mean_z + troops_c_demeaned_z:v2x_polyarchy_change_c_demeaned_z +
+              troops_c_mean_z:gdp_growth_c_mean_z + troops_c_demeaned_z:gdp_growth_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              v2x_polyarchy_change_c_mean_z + v2x_polyarchy_change_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+              (1 | ccode), 
+            zi ~ troops_c_mean_z + troops_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = zero_inflated_negbinomial(),
+            control = list(adapt_delta = 0.90,
+                           max_treedepth = 12),
+            file = here::here("Output/Chapter-Protests", "us.zi.4"))
+
+
+# No AR1
+# Interaction between troops and democratic change variable and economic growth
+us.zi.5 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              v2x_polyarchy_change_c_mean_z + v2x_polyarchy_change_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+              (1 | ccode), 
+            zi ~ troops_c_mean_z + troops_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z,
+            shape ~ troops_c_mean_z + troops_c_demeaned_z),
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            thin = THIN,
+            seed = SEED,
+            family = zero_inflated_negbinomial(),
+            control = list(adapt_delta = 0.80,
+                           max_treedepth = 10),
+            file = here::here("Output/Chapter-Protests", "us.zi.5"))
+
+
+
+
+
+```
+
+### Hurdle Models
+
+```{r U.S. Protest Hurdle Models}
+
+# Conflicted package really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+VAGUEPRIOR <- c(set_prior("cauchy(0, 5)", class = "b"),
+                set_prior("cauchy(0, 10)", class = "Intercept"))
+
+ITER <- 8000
+WARMUP <-  4000
+CORES <- 6
+CHAINS <- 6
+THIN <- 1
+SEED <- 123
+
+
+
+# Base model
+us.hu.1 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+                    (1 | ccode) +
+                    ar(time = year, gr = ccode, p = 1, cov = TRUE),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               inits = "random",
+               thin = THIN,
+               seed = SEED,
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.90,
+                              max_treedepth = 12),
+               file = here::here("Output/Chapter-Protests", "us.hu.1"))
+
+
+# Base model no AR1 term
+us.hu.2 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+                    (1 | ccode),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag + 
+                    (1 | ccode)),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               thin = THIN,
+               seed = SEED,
+               inits = "0",
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.90,
+                              max_treedepth = 12),
+               file = here::here("Output/Chapter-Protests", "us.hu.2"))
+
+
+# Base Model
+# Nor AR1
+# Curvilinear regime type variables
+us.hu.3 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z_sq + v2x_polyarchy_c_demeaned_z_sq +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+                    (1 | ccode),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z_sq + v2x_polyarchy_c_demeaned_z_sq +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               thin = THIN,
+               seed = SEED,
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.90,
+                              max_treedepth = 12),
+               file = here::here("Output/Chapter-Protests", "us.hu.3"))
+
+
+
+# No AR1
+# Interaction between troops and democratic change variable and economic growth
+us.hu.4 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    troops_c_mean_z:v2x_polyarchy_change_c_mean_z + 
+                    troops_c_demeaned_z:v2x_polyarchy_change_c_demeaned_z +
+                    troops_c_mean_z:gdp_growth_c_mean_z + troops_c_demeaned_z:gdp_growth_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    v2x_polyarchy_change_c_mean_z + v2x_polyarchy_change_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+                    (1 | ccode),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z_sq + v2x_polyarchy_c_demeaned_z_sq +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               thin = THIN,
+               seed = SEED,
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.90,
+                              max_treedepth = 12),
+               file = here::here("Output/Chapter-Protests", "us.hu.4"))
+
+
+
+# Model shape parameter
+us.hu.5 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+                    (1 | ccode),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag,
+                  shape ~ troops_c_mean_z + troops_c_demeaned_z),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               thin = THIN,
+               seed = SEED,
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.90,
+                              max_treedepth = 12),
+               file = here::here("Output/Chapter-Protests", "us.hu.5"))
+
+
+
+# Base model no AR1 term
+# Includes varying intercept for hurdle stage
+us.hu.6 <- brm(bf(anti_us_protest ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+                    (1 | ccode),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_protest_w_mean_c_mean_z_lag + anti_us_protest_w_mean_c_demeaned_z_lag +
+                    (1 | ccode)),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               thin = THIN,
+               seed = SEED,
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.90,
+                              max_treedepth = 12),
+               file = here::here("Output/Chapter-Protests", "us.hu.6"))
+
+```
+
+### Mean-centered hurdle models
+
+```{r mean-centered models}
+
+# Conflicted package really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+VAGUEPRIOR <- c(set_prior("cauchy(0, 10)", class = "b"),
+                set_prior("cauchy(0, 20)", class = "Intercept"))
+
+ITER <- 10000
+WARMUP <-  5000
+CORES <- 4
+CHAINS <- 4
+THIN <- 1
+SEED <- 66502
+
+# Base model no AR1 term with centered variables only
+us.hu.1.cent <- brm(bf(anti_us_protest ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         idealdistance_2_z +
+                         anti_us_protest_w_mean_z_lag + 
+                         ar(time = year, gr = ccode, p = 1, cov = TRUE) +
+                         (1 | ccode), 
+                       hu ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         anti_us_protest_w_mean_z_lag +
+                         idealdistance_2_z +
+                         (1 | ccode)),
+                    data = p.data,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    prior = VAGUEPRIOR,
+                    chains = CHAINS,
+                    cores = CORES,
+                    thin = THIN,
+                    seed = SEED,
+                    family = hurdle_negbinomial(),
+                    control = list(adapt_delta = 0.95,
+                                   max_treedepth = 10),
+                    file = here::here("Output/Chapter-Protests", "us.hu.1.cent"))
+
+
+# Base model no AR1 term with centered variables only
+us.hu.2.cent <- brm(bf(anti_us_protest ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         idealdistance_2_z +
+                         anti_us_protest_w_mean_z_lag + 
+                         (1 | ccode), 
+                       hu ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         anti_us_protest_w_mean_z_lag +
+                         idealdistance_2_z +
+                         (1 | ccode)),
+                    data = p.data,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    prior = VAGUEPRIOR,
+                    chains = CHAINS,
+                    cores = CORES,
+                    thin = THIN,
+                    seed = SEED,
+                    family = hurdle_negbinomial(),
+                    control = list(adapt_delta = 0.95,
+                                   max_treedepth = 10),
+                    file = here::here("Output/Chapter-Protests", "us.hu.2.cent"))
+
+
+# Base Model
+# No AR1 term
+# Curvilinear regime type
+us.hu.3.cent <- brm(bf(anti_us_protest ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         v2x_polyarchy_z_sq +
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         idealdistance_2_z +
+                         anti_us_protest_w_mean_z_lag + 
+                         (1 | ccode), 
+                       hu ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         v2x_polyarchy_z_sq +
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         anti_us_protest_w_mean_z_lag +
+                         idealdistance_2_z +
+                         (1 | ccode)),
+                    data = p.data,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    prior = VAGUEPRIOR,
+                    chains = CHAINS,
+                    cores = CORES,
+                    thin = THIN,
+                    seed = SEED,
+                    family = hurdle_negbinomial(),
+                    control = list(adapt_delta = 0.95,
+                                   max_treedepth = 10),
+                    file = here::here("Output/Chapter-Protests", "us.hu.3.cent"))
+
+
+# Base Model
+# No AR1 term
+# Curvilinear regime type
+us.hu.4.cent <- brm(bf(anti_us_protest ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         v2x_polyarchy_change_z +
+                         troops_z:v2x_polyarchy_change_z +
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         idealdistance_2_z +
+                         anti_us_protest_w_mean_z_lag + 
+                         (1 | ccode), 
+                       hu ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         v2x_polyarchy_change_z +
+                         troops_z:v2x_polyarchy_change_z +
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         anti_us_protest_w_mean_z_lag +
+                         idealdistance_2_z +
+                         (1 | ccode)),
+                    data = p.data,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    prior = VAGUEPRIOR,
+                    chains = CHAINS,
+                    cores = CORES,
+                    thin = THIN,
+                    seed = SEED,
+                    family = hurdle_negbinomial(),
+                    control = list(adapt_delta = 0.95,
+                                   max_treedepth = 10),
+                    file = here::here("Output/Chapter-Protests", "us.hu.4.cent"))
+
+
+# Base Model
+# No AR1 term
+# Curvilinear regime type
+us.hu.5.cent <- brm(bf(anti_us_protest ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         v2x_polyarchy_change_z +
+                         troops_z:v2x_polyarchy_change_z +
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         idealdistance_2_z +
+                         anti_us_protest_w_mean_z_lag + 
+                         (1 | ccode), 
+                       hu ~ troops_z +
+                         troops_w_mean_z + 
+                         v2x_polyarchy_z + 
+                         v2x_polyarchy_change_z +
+                         troops_z:v2x_polyarchy_change_z +
+                         gdp_z + 
+                         pop_z + 
+                         us_war +
+                         us_ally +
+                         anti_us_protest_w_mean_z_lag +
+                         idealdistance_2_z +
+                         (1 | ccode),
+                       shape ~ troops_z),
+                    data = p.data,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    prior = VAGUEPRIOR,
+                    chains = CHAINS,
+                    cores = CORES,
+                    thin = THIN,
+                    seed = SEED,
+                    family = hurdle_negbinomial(),
+                    control = list(adapt_delta = 0.98,
+                                   max_treedepth = 10),
+                    file = here::here("Output/Chapter-Protests", "us.hu.5.cent"))
+
+
+```
+
+## Anti-U.S. military protest models
+
+### NBREG
+
+These models focus on Anti-U.S. military protests, broadly. Model
+specifications are as follows:
+
+1.  Full model with varying intercepts and AR1 correction
+2.  Full model with varying intercepts and no AR1 correction
+3.  Full model curvilinear regime type variable
+4.  Full model with interactions between troops and economic growth and
+    democratization
+
+```{r U.S. Protest NBREG Models}
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+VAGUEPRIOR <- c(set_prior("normal(0, 10)", class = "b"),
+                set_prior("normal(0, 50)", class = "Intercept"))
+
+ITER <- 3000
+WARMUP <-  1000
+CORES <- 2
+CHAINS <- 2
+SEED <- 66502
+
+
+
+# Base model
+mil.1 <- brm(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+              (1 | ccode) +
+              ar(time = year, gr = ccode, p = 1, cov = TRUE), 
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.85),
+            file = here::here("Output/Chapter-Protests", "mil.1"))
+
+
+# Base model no AR1 term
+mil.2 <- brm(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+              (1 | ccode), 
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.85),
+            file = here::here("Output/Chapter-Protests", "mil.2"))
+
+
+# Base Model
+# Nor AR1
+# Curvilinear regime type variables
+mil.3 <- brm(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              v2x_polyarchy_c_mean_z_sq + v2x_polyarchy_c_demeaned_z_sq +
+              exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+              (1 | ccode), 
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.85),
+            file = here::here("Output/Chapter-Protests", "mil.3"))
+
+
+
+# No AR1
+# Interaction between troops and democratic change variable and economic growth
+mil.4 <- brm(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+              troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+              troops_c_mean_z:v2x_polyarchy_change_c_mean_z + troops_c_demeaned_z:v2x_polyarchy_change_c_demeaned_z +
+              troops_c_mean_z:gdp_growth_c_mean_z + troops_c_demeaned_z:gdp_growth_c_demeaned_z +
+              v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+              v2x_polyarchy_change_c_mean_z + v2x_polyarchy_change_c_demeaned_z +
+              exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+              gdp_c_mean_z + gdp_c_demeaned_z +
+              gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+              pop_c_mean_z + pop_c_demeaned_z +
+              protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+              protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+              idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+              conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+              us_war_c_mean_z + us_war_c_demeaned_z + 
+              us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+              us_ally_c_mean_z + us_ally_c_demeaned_z +
+              defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+              anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+              (1 | ccode), 
+            data = p.data,
+            iter = ITER,
+            warmup = WARMUP,
+            prior = VAGUEPRIOR,
+            chains = CHAINS,
+            cores = CORES,
+            seed = SEED,
+            family = negbinomial(),
+            control = list(adapt_delta = 0.85),
+            file = here::here("Output/Chapter-Protests", "mil.4"))
+
+
+
+
+
+```
+
+### Zero-Inflated Models
+
+```{r U.S. Protest ZINBREG Models}
+
+
+# Conflicted package really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+VAGUEPRIOR <- c(set_prior("normal(0, 10)", class = "b"),
+                set_prior("normal(0, 50)", class = "Intercept"))
+
+ITER <- 5000
+WARMUP <-  2000
+CORES <- 2
+CHAINS <- 2
+SEED <- 66502
+
+
+
+# Base model
+mil.zi.1 <- brm(bf(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+                    (1 | ccode) +
+                    ar(time = year, gr = ccode, p = 1, cov = TRUE),
+                  zi ~ troops_c_mean_z + troops_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               seed = SEED,
+               family = zero_inflated_negbinomial(),
+               control = list(adapt_delta = 0.85),
+               file = here::here("Output/Chapter-Protests", "mil.zi.1"))
+
+
+# Base model no AR1 term
+mil.zi.2 <- brm(bf(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+                    (1 | ccode), 
+                  zi ~ troops_c_mean_z + troops_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               seed = SEED,
+               family = zero_inflated_negbinomial(),
+               control = list(adapt_delta = 0.85),
+               file = here::here("Output/Chapter-Protests", "mil.zi.2"))
+
+
+# Base Model
+# Nor AR1
+# Curvilinear regime type variables
+mil.zi.3 <- brm(bf(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z_sq + v2x_polyarchy_c_demeaned_z_sq +
+                    exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+                    (1 | ccode), 
+                  zi ~ troops_c_mean_z + troops_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               seed = SEED,
+               family = zero_inflated_negbinomial(),
+               control = list(adapt_delta = 0.85),
+               file = here::here("Output/Chapter-Protests", "mil.zi.3"))
+
+
+
+# No AR1
+# Interaction between troops and democratic change variable and economic growth
+mil.zi.4 <- brm(bf(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    troops_c_mean_z:v2x_polyarchy_change_c_mean_z + troops_c_demeaned_z:v2x_polyarchy_change_c_demeaned_z +
+                    troops_c_mean_z:gdp_growth_c_mean_z + troops_c_demeaned_z:gdp_growth_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    v2x_polyarchy_change_c_mean_z + v2x_polyarchy_change_c_demeaned_z +
+                    exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+                    (1 | ccode), 
+                  zi ~ troops_c_mean_z + troops_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               seed = SEED,
+               family = zero_inflated_negbinomial(),
+               control = list(adapt_delta = 0.85),
+               file = here::here("Output/Chapter-Protests", "mil.zi.4"))
+
+
+
+
+
+# Base model with no zero-inflated equation
+mil.zi.5 <- brm(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+                 troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                 v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                 exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+                 gdp_c_mean_z + gdp_c_demeaned_z +
+                 gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                 pop_c_mean_z + pop_c_demeaned_z +
+                 protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                 protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                 idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                 conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                 us_war_c_mean_z + us_war_c_demeaned_z + 
+                 us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z + +
+                 us_ally_c_mean_z + us_ally_c_demeaned_z +
+                 defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                 anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+                 (1 | ccode),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               seed = SEED,
+               family = zero_inflated_negbinomial(),
+               control = list(adapt_delta = 0.85),
+               file = here::here("Output/Chapter-Protests", "mil.zi.5"))
+
+```
+
+### Hurdle Models
+
+```{r U.S. Protest Hurdle Models}
+
+# Conflicted package really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+VAGUEPRIOR <- c(set_prior("normal(0, 10)", class = "b"),
+                set_prior("normal(0, 50)", class = "Intercept"))
+
+ITER <- 6000
+WARMUP <-  3000
+CORES <- 2
+CHAINS <- 2
+SEED <- 66502
+
+
+
+# Base model
+mil.hu.1 <- brm(bf(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+                    (1 | ccode) +
+                    ar(time = year, gr = ccode, p = 1, cov = TRUE),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag + 
+                    (1 | ccode)),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               seed = SEED,
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.9),
+               file = here::here("Output/Chapter-Protests", "mil.hu.1"))
+
+
+# Base model no AR1 term
+mil.hu.2 <- brm(bf(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+                    (1 | ccode),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag + 
+                    (1 | ccode)),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               seed = SEED,
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.9),
+               file = here::here("Output/Chapter-Protests", "mil.hu.2"))
+
+
+# Base Model
+# Nor AR1
+# Curvilinear regime type variables
+mil.hu.3 <- brm(bf(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z_sq + v2x_polyarchy_c_demeaned_z_sq +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+                    (1 | ccode),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z_sq + v2x_polyarchy_c_demeaned_z_sq +
+                    exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag + 
+                    (1 | ccode)),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               seed = SEED,
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.9),
+               file = here::here("Output/Chapter-Protests", "mil.hu.3"))
+
+
+
+# No AR1
+# Interaction between troops and democratic change variable and economic growth
+mil.hu.4 <- brm(bf(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    troops_c_mean_z:v2x_polyarchy_change_c_mean_z + 
+                    troops_c_demeaned_z:v2x_polyarchy_change_c_demeaned_z +
+                    troops_c_mean_z:gdp_growth_c_mean_z + troops_c_demeaned_z:gdp_growth_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    v2x_polyarchy_change_c_mean_z + v2x_polyarchy_change_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+                    (1 | ccode),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z_sq + v2x_polyarchy_c_demeaned_z_sq +
+                    exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag + 
+                    (1 | ccode)),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               seed = SEED,
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.9),
+               file = here::here("Output/Chapter-Protests", "mil.hu.4"))
+
+
+# Base Model
+# No AR1
+# Modeling Sigma parameter
+mil.hu.5 <- brm(bf(anti_us_mil ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    defburden_w_mean_c_mean_z + defburden_w_mean_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag +
+                    (1 | ccode),
+                  hu ~ troops_c_mean_z + troops_c_demeaned_z +
+                    troops_w_mean_c_mean_z + troops_w_mean_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z +
+                    exports_from_us_c_mean_z + exports_from_us_c_demeaned_z +
+                    gdp_c_mean_z + gdp_c_demeaned_z +
+                    gdp_growth_c_mean_z + gdp_growth_c_demeaned_z +
+                    pop_c_mean_z + pop_c_demeaned_z +
+                    protest_other_c_mean_z_lag + protest_other_c_demeaned_z_lag +
+                    protest_other_w_mean_c_mean_z_lag + protest_other_w_mean_c_demeaned_z_lag +
+                    conflict_dummy_c_mean_z + conflict_dummy_c_demeaned_z +
+                    us_war_c_mean_z + us_war_c_demeaned_z + 
+                    us_war_w_mean_c_mean_z + us_war_w_mean_c_demeaned_z +
+                    us_ally_c_mean_z + us_ally_c_demeaned_z +
+                    idealdistance_2_c_mean_z + idealdistance_2_c_demeaned_z +
+                    anti_us_mil_w_mean_c_mean_z_lag + anti_us_mil_w_mean_c_demeaned_z_lag + 
+                    (1 | ccode),
+                  sigma ~ troops_c_mean_z + troops_c_demeaned_z +
+                    v2x_polyarchy_c_mean_z + v2x_polyarchy_c_demeaned_z + 
+                    (1 | ccode),
+                  nl = TRUE),
+               data = p.data,
+               iter = ITER,
+               warmup = WARMUP,
+               prior = VAGUEPRIOR,
+               chains = CHAINS,
+               cores = CORES,
+               seed = SEED,
+               family = hurdle_negbinomial(),
+               control = list(adapt_delta = 0.9),
+               file = here::here("Output/Chapter-Protests", "mil.hu.5"))
+
+
+
+```
+
+# Opinion Models of Protest
+
+## Predicting Protest
+
+```{r protest participation models}
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+# Note beta prior in the intercept only models, so get rid of it here. 
+PRIOR <- c(set_prior("normal(0, 2)", class = "Intercept"))
+
+ITER <- 5000
+WARMUP <-  2500
+CORES <- 4
+CHAINS <- 4
+THIN <- 1
+SEED <- 66502
+
+
+# Have to use separate correlation indicator because correlations can only be structured across common grouping factors (i.e. varying effects have to be associated with country OR year. can't do both.
+
+protest.naive <- bf(protest_dummy ~ (1 |p| country) + (1 |r| year))
+
+op.protest.1 <- brm(protest.naive,
+                    data = training.data,
+                    family = bernoulli(link = "logit"),
+                    prior = PRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = THIN,
+                    seed = SEED, 
+                    control = list(adapt_delta = 0.82,
+                                   max_treedepth = 13),
+                    file = here::here("Output/Chapter-Protests", "op.protest.1"),
+                    backend = "cmdstanr")
+
+
+PRIOR <- c(set_prior("normal(0, 1)", class = "b"),
+           set_prior("normal(0, 2)", class = "Intercept"))
+
+
+
+protest.base <- bf(protest_dummy ~ age + ed_z + ideology_z + income.5.cat + gender + minority + (1 |p| country) + (1 |r| year))
+
+op.protest.2 <- brm(protest.base,
+                    data = training.data,
+                    family = bernoulli(link = "logit"),
+                    prior = PRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = THIN,
+                    seed = SEED, 
+                    control = list(adapt_delta = 0.82,
+                                   max_treedepth = 13),
+                    file = here::here("Output/Chapter-Protests", "op.protest.2"),
+                    backend = "cmdstanr")
+
+
+
+protest.full <- bf(protest_dummy ~ age + ed_z + ideology_z + income.5.cat + gender + minority + troops_1 + contact_pers + contact_nonpers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + (1 |p| country) + (1 |r| year))
+
+op.protest.3 <- brm(protest.full,
+                    data = training.data,
+                    family = bernoulli(link = "logit"),
+                    prior = PRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = THIN,
+                    seed = SEED, 
+                    control = list(adapt_delta = 0.82,
+                                   max_treedepth = 13),
+                    file = here::here("Output/Chapter-Protests", "op.protest.3"),
+                    backend = "cmdstanr")
+
+
+protest.full.country <- bf(protest_dummy ~ age + ed_z + ideology_z + income.5.cat + gender + minority + troops_1 + contact_pers + contact_nonpers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + (1 |p| country) + (1 |r| year))
+
+op.protest.4 <- brm(protest.full,
+                    data = training.data,
+                    family = bernoulli(link = "logit"),
+                    prior = PRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = THIN,
+                    seed = SEED, 
+                    control = list(adapt_delta = 0.85,
+                                   max_treedepth = 13),
+                    file = here::here("Output/Chapter-Protests", "op.protest.4"),
+                    backend = "cmdstanr")
+
+
+protest.full.ve <- bf(protest_dummy ~ age + ed_z + ideology_z + income.5.cat + gender + minority + troops_1 + contact_pers + contact_nonpers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + (1 + age + gender + ed_z + ideology_z + income.5.cat + minority + contact_pers + contact_nonpers + troops_crime_pers + basecount_z |p| country) + (1 |r| year))
+
+op.protest.5 <- brm(protest.full.ve,
+                    data = training.data,
+                    family = bernoulli(link = "logit"),
+                    prior = PRIOR,
+                    iter = ITER,
+                    warmup = WARMUP,
+                    cores = CORES,
+                    chains = CHAINS,
+                    thin = THIN,
+                    seed = SEED, 
+                    control = list(adapt_delta = 0.85,
+                                   max_treedepth = 13),
+                    file = here::here("Output/Chapter-Protests", "op.protest.5"),
+                    backend = "cmdstanr")
+
+
+
+
+var.list <- tibble(`Intercept Only` = c(" ", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""),
+               `Individual Demographics Only` = c("Age", "Education", "Ideology", "Gender", "Income", "Minority Status", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""),
+               `Demographic and Attitudinal Variables` = c("Age", "Education", "Ideology", "Gender", "Income", "Minority Status", "Attitude towards U.S. military presence", "Personal contact", "Network Contact", "Personal benefits", "Personal experience with troops and crime", "Assessment of U.S. influence (Quantity)", "Assessment of U.S. influence (Quality)", "", "", "", "", "", "", "", "",  "", "", "", ""),
+               `Full Model w/Province and Country Variables` = c("Age", "Education", "Ideology", "Gender", "Income", "Minority Status", "Attitude towards U.S. military presence", "Personal contact", "Network Contact", "Personal benefits", "Personal experience with troops and crime", "Assessment of U.S. influence (Quantity)", "Assessment of U.S. influence (Quality)", "Base Count", "GDP", "Population", "", "", "", "", "",  "", "", "", ""),
+               `Full Model w/Varying Coefficients` = c("Age", "Education", "Ideology", "Gender", "Income", "Minority Status", "Attitude towards U.S. military presence", "Personal contact", "Network Contact", "Personal benefits", "Personal experience with troops and crime", "Assessment of U.S. influence (Quantity)", "Assessment of U.S. influence (Quality)", "Base Count", "GDP", "Population", "Troop presence", "Age", "Gender", "Minority Status", "Ideology", "Personal Contact", "Network Contact", "Personal experience with troops and crime", "Base Count"))
+
+
+var.table <- kableExtra::kable(var.list, caption = "Predictive Model Specification \\label{tab:protestpredictionvariables}", booktabs = TRUE, "latex") %>% 
+  kable_styling(latex_options = "striped", protect_latex = TRUE, font_size = 8) %>% 
+  pack_rows("Population-level coefficients" , 1, 16, hline_before = TRUE, hline_after = TRUE) %>%
+  pack_rows("Varying Coefficients" , 17, 25, hline_before = TRUE, hline_after = TRUE) %>%
+  row_spec(0, bold = TRUE) %>% 
+  column_spec(1, width = "3.0cm") %>% 
+  column_spec(2, width = "3.0cm") %>% 
+  column_spec(3, width = "3.0cm") %>% 
+  column_spec(4, width = "3.0cm") %>% 
+  column_spec(5, width = "3.0cm") %>% 
+  save_kable(here("Tables/Chapter-Protests/model-protest-prediction-varlist.tex"),
+             keep_tex = TRUE)
+
+
+```
+
+## Predictive Figures
+
+```{r Predictive Protest Figures, dpi=400, echo = FALSE}
+
+
+
+# Separation plot for the naive model
+# Using `predict` command rather than fitted because it accounts for uncertainty at all levels of the model.
+sep.plot.1 <- test.data %>% 
+  bind_cols(as.data.frame(predict(op.protest.1, newdata = test.data))) %>%
+  arrange(Estimate) %>% 
+  mutate(index = row_number(),
+         model = "Intercept Only") %>% 
+  filter(Estimate >= 0)
+
+
+# Separation plot for the model including individual demographics
+sep.plot.2 <- test.data %>% 
+  bind_cols(as.data.frame(predict(op.protest.2, newdata = test.data))) %>%
+  arrange(Estimate) %>% 
+  mutate(index = row_number(),
+         model = "Demographics Only") %>% 
+  filter(Estimate >= 0)
+
+
+# Separation plot for the model including attitudinal variables
+sep.plot.3 <- test.data %>% 
+  bind_cols(as.data.frame(predict(op.protest.3, newdata = test.data))) %>%
+  arrange(Estimate) %>% 
+  mutate(index = row_number(),
+         model = "Demographics and Attitudinal") %>% 
+  filter(Estimate >= 0)
+
+
+# Separation plot for the full model
+sep.plot.4 <- test.data %>% 
+  bind_cols(as.data.frame(predict(op.protest.4, newdata = test.data))) %>%
+  arrange(Estimate) %>% 
+  mutate(index = row_number(),
+         model = "Country and Province Variables") %>% 
+  filter(Estimate >= 0)
+
+
+# Separation plot for the full model with varying coefficients
+sep.plot.5 <- test.data %>% 
+  bind_cols(as.data.frame(predict(op.protest.5, newdata = test.data))) %>%
+  arrange(Estimate) %>% 
+  mutate(index = row_number(),
+         model = "Varying Coefficients") %>%
+  filter(Estimate >= 0)
+
+
+  
+sep.plot.com <- bind_rows(sep.plot.1, sep.plot.2, sep.plot.3, sep.plot.4, sep.plot.5) %>% 
+  mutate(model = factor(model, levels = c("Intercept Only", "Demographics Only", "Demographics and Attitudinal", "Country and Province Variables", "Varying Coefficients"))) %>% 
+  ungroup() %>% 
+  filter(Estimate >= 0)
+
+ggplot(sep.plot.com, aes(x = index, y = Estimate)) +
+            geom_rect(aes(x = index, xmin=index-0.05, xmax=index+0.05, y = Estimate, ymin = 0, ymax = 1, fill = protest_dummy, alpha = -protest_dummy)) + 
+            geom_line(size = 1) +
+            facet_wrap(. ~ model, scales = "free_x", ncol = 1) +
+            scale_x_continuous(expand = c(0, 0)) +
+            scale_y_continuous(expand = c(0, 0)) +
+            scale_fill_manual(values = c("red", "dodgerblue1"), guide = FALSE) +
+            scale_alpha_discrete(range = c(0.1, 1)) +
+            guides(alpha = FALSE) +
+            theme_flynn +
+            theme(axis.text.x = element_blank(),
+                  axis.ticks.x = element_blank(),
+                  axis.title.y = element_text(vjust = 3),
+                  axis.text.y = element_text(size = 10),
+                  panel.grid.major =  element_blank(),
+                  panel.grid.minor = element_blank()) +
+            labs(x = "",
+                 y = "Pr(Protest Activity)",
+                 title = "Separation Plots for Predictive Protest Models")
+
+ggsave(here("Figures/Chapter-Protests/", "figure-sep-plot-combined.pdf"), height = 6, width = 7, units = "in", device = cairo_pdf())
+ggsave(here("Figures/Chapter-Protests/", "figure-sep-plot-combined.png"), height = 6, width = 7, units = "in", dpi = 400)
+ggsave(here("Figures/Chapter-Protests/", "figure-sep-plot-combined.tiff"), height = 6, width = 7, units = "in", dpi = 400)
+  
+
+
+
+```
+
+### Posterior Predictive Checks
+
+```{r posterior predictive checks}
+
+
+
+# Define function to calculate proportion of 0 values
+prop_protest <- function(x) mean(x == 1, na.rm = TRUE)
+
+y <- test.data %>% 
+  dplyr::select(protest_dummy) %>% 
+  filter(!is.na(protest_dummy)) %>% 
+  mutate(protest_dummy = factor(protest_dummy, levels = c("No", "Yes"), labels = c("No", "Yes")),
+         protest_dummy = as.numeric(protest_dummy) - 1) %>% 
+  as.vector()
+
+y.rep.1 <- brms::posterior_predict(op.protest.1, nsamples = 1000)
+protest.ppcheck.1  <- bayesplot::ppc_stat(y$protest_dummy, y.rep.1[,1:length(y$protest_dummy)], stat = "prop_protest", binwidth = 0.001) + labs(title = "Intercept Only")
+
+y.rep.2 <- brms::posterior_predict(op.protest.2, nsamples = 1000)
+protest.ppcheck.2  <- bayesplot::ppc_stat(y$protest_dummy, y.rep.2[,1:length(y$protest_dummy)], stat = "prop_protest", binwidth = 0.001) + labs(title = "Demographics Only")
+
+y.rep.3 <- brms::posterior_predict(op.protest.3, nsamples = 1000)
+protest.ppcheck.3  <- bayesplot::ppc_stat(y$protest_dummy, y.rep.3[,1:length(y$protest_dummy)], stat = "prop_protest", binwidth = 0.001) + labs(title = "Demographics and Attitudinal")
+
+y.rep.4 <- brms::posterior_predict(op.protest.4, nsamples = 1000)
+protest.ppcheck.4  <- bayesplot::ppc_stat(y$protest_dummy, y.rep.4[,1:length(y$protest_dummy)], stat = "prop_protest", binwidth = 0.001) + labs(title = "Country and Province Variables")
+
+y.rep.5 <- brms::posterior_predict(op.protest.5, nsamples = 1000)
+protest.ppcheck.5  <- bayesplot::ppc_stat(y$protest_dummy, y.rep.5[,1:length(y$protest_dummy)], stat = "prop_protest", binwidth = 0.001) + labs(title = "Full w/Varying Coefficient")
+
+
+protest.ppcheck.fig <- patchwork::wrap_plots(protest.ppcheck.1, protest.ppcheck.2, protest.ppcheck.3, protest.ppcheck.4, protest.ppcheck.5, ncol = 2 )
+
+
+protest.ppcheck.fig <- protest.ppcheck.fig +
+  plot_layout(guides = "collect") &
+  scale_x_continuous(limits = c(0.07, 0.11)) &
+  scale_y_continuous(limits = c(0, 140)) &
+  labs(fill = "Simulated Values",
+       color = "Observed Proportion") &
+  theme_flynn &
+  theme(plot.title = element_text(size = 10))
+
+protest.ppcheck.fig
+
+ggsave(here("Figures/Chapter-Protests/fig-opinion-ppcheck-plots.png"), height = 6, width = 8, units = "in")
+
+
+```
+
+
+
+## Coefficient Figures
+
+```{r protest prediction coefficients}
+
+m2.fig <- op.protest.2 %>% 
+  gather_draws(b_minorityYes) %>% 
+  mutate(model = "Demographics")
+
+m3.fig <- op.protest.3 %>% 
+  gather_draws(b_minorityYes,
+               b_contact_persYes,
+               b_contact_nonpersYes,
+               b_troops_crime_persYes) %>% 
+  mutate(model = "Demographics and attitudes")
+
+m4.fig <- op.protest.4 %>% 
+  gather_draws(b_minorityYes,
+               b_contact_persYes,
+               b_contact_nonpersYes,
+               b_troops_crime_persYes) %>% 
+  mutate(model = "Group-level variables") 
+
+
+m5.fig <- op.protest.5 %>% 
+  gather_draws(b_minorityYes,
+               b_contact_persYes,
+               b_contact_nonpersYes,
+               b_troops_crime_persYes) %>% 
+  mutate(model = "Varying coefficient")
+
+
+m5.wide <- op.protest.5 %>% 
+  spread_draws(b_minorityYes,
+               b_contact_persYes,
+               b_contact_nonpersYes,
+               b_troops_crime_persYes,
+               r_country[country, var],
+               r_year[year, var2]) %>% 
+  mutate(minority = b_minorityYes + r_country,
+         contact = b_contact_persYes + r_country + r_year,
+         network = b_contact_nonpersYes + r_country + r_year,
+         crime = b_troops_crime_persYes + r_country + r_year) %>% 
+  filter(var == "troops_crime_persYes" | var == "minorityYes" | var == "contact_persYes" | var == "contact_nonpersYes") %>% 
+  dplyr::select(.chain, .iteration, .draw, country, minority, contact, network, crime)
+
+m5.minority <- m5.wide %>% 
+  dplyr::filter(var == "minorityYes") %>% 
+  dplyr::rename(value = minority) 
+
+m5.crime <- m5.wide %>% 
+  dplyr::filter(var == "troops_crime_persYes") %>% 
+  dplyr::rename(value = crime)
+
+m5.contact <- m5.wide %>% 
+  dplyr::filter(var == "contact_persYes") %>% 
+  dplyr::rename(value = contact)
+
+m5.networkcontact <- m5.wide %>% 
+  dplyr::filter(var == "contact_nonpersYes") %>% 
+  dplyr::rename(value = network)
+
+
+# Combined country level varying effects
+m5.combined <- bind_rows(m5.minority, m5.crime, m5.contact, m5.networkcontact) %>% 
+  mutate(country = gsub("\\.", " ", country),
+         var = factor(var, levels = c("minorityYes", "contact_persYes", "contact_nonpersYes", "troops_crime_persYes"),
+                        labels = c("Minority Status", "Personal Contact", "Network Contact", "Experience with Crime")))
+
+
+
+# combined population figures
+m.pops <- bind_rows(m2.fig, m3.fig, m4.fig, m5.fig) %>% 
+  mutate(.variable = factor(.variable, levels = c("b_minorityYes", "b_contact_persYes", "b_contact_nonpersYes", "b_troops_crime_persYes"),
+                        labels = c("Minority Status", "Personal Contact", "Network Contact", "Experience with Crime")))
+
+population.figures <- ggplot(m.pops, aes(x = .value, y = .variable, color = model)) +
+  stat_pointinterval(.width = c(0.50, 0.80, 0.95), position = position_dodge(width = 0.35)) +
+  geom_vline(xintercept = 0, color = "red", width = 1) +
+  theme_flynn +
+  theme(plot.title.position = "plot") +
+  scale_color_brewer(palette = "Set2") +
+  labs(x = "Coefficient Value",
+       y = "",
+       color = "Model",
+       title = "Population-level coefficient values for individual protest activity")
+
+ggsave(here("Figures/Chapter-Protests/fig-coefplot-population-opinion-model-compare.png"), height = 5, width = 8, unit = "in")
+
+population.figures
+
+country.figures <- ggplot(m5.combined, aes(x = value, y = country, color = var)) +
+  stat_pointinterval(stat = median_hdi, .width = c(0.50, 0.80, 0.95), position = position_dodge(width = 0.85)) +
+  geom_vline(xintercept = 0, color = "red", width = 1) +
+  theme_flynn +
+  theme(plot.title.position = "plot") +
+  scale_color_brewer(palette = "Set2") +
+  labs(color = "Variable",
+       x = "Country-level coefficients",
+       y = "",
+       title = "Varying Coefficients for individual protest activity")
+
+ggsave(here("Figures/Chapter-Protests/fig-coefplot-varyingeffect-opinion-model-5.png"), height = 8, width = 8, unit = "in")
+
+country.figures
+
+
+
+
+```
+
+
+
+
+# Tables
+
+## Individual Protest Predictions
+
+```{r Model Specification Tables for Opinion Models, echo = FALSE, warnings = FALSE}
+
+op.model.list <- list("Intercept Only" = op.protest.1, 
+                      "Demographics Only" = op.protest.2,
+                      "Demographics and Attitudinal" = op.protest.3,
+                      "Country and Province Variables" = op.protest.4, 
+                      "Full w/Varying Coefficients" = op.protest.5)
+
+coef.names.long <- c("age25to34years" = "25-34", "age35to44years" = "35-44", "age45to54years" = "45-54",
+                "age55to64years" = "55-64", "ageAge65orolder" = "65+",
+                "ed" = "Education", 
+                "ideology" = "Ideology",
+                "income.5.cat21M40%" = "21-40", "income.5.cat41M60%" = "41-60",
+                "income.5.cat61M80%" = "61-80", "income.5.cat81M100%" = "81-100",
+                "genderFemale" = "Female", "genderNonMbinary" = "Non-Binary",
+                "genderNoneoftheabove" = "Gender: None of the above",
+                "troops_1Veryunfavorable" = "Very Unfavorable", "troops_1Somewhatunfavorable" = "Troops: Somewhat Unfavorable", "troops_1Neutral" = "Troops: Neutral", "troops_1Somewhatfavorable" = "Troops: Somewhat favorable", "troops_1Veryfavorable" = "Troops: Very favorable", 
+                "contact_persYes" = "Contact: Yes", "contact_persDontknowDdeclinetoanswer" = "Contact: Don't know/Decline", 
+                "benefit_persYes" = "Benefit: Don't know/Decline", "benefit_persDontknowDdeclinetoanswer" = "Benefit: Don't know/Decline", 
+                "troops_crime_persYes" = "Experience Crime: Yes",
+                "american_inf_1DontknowDdeclinetoanswer" = "Influence 1: Don't know/Decline", "american_inf_1Alittle" = "Influence 1: A little",  "american_inf_1Some" = "Influence 1: Some", "american_inf_1Alot" = "A lot", 
+                "american_inf_2DontknowDdeclinetoanswer" = "Influence 2: Don't know/Decline", "american_inf_2Verynegative" = "Influence 2: Very negative", "american_inf_2Negative" = "Influence 2: Negative", "american_inf_2Positive" = "Influence 2: Positive", "american_inf_2Verypositive" = "Influence 2: Very positive", 
+                "gdp_log" = "log(GDP)", 
+                "pop_log" = "log(Population)", 
+                "troops_log" = "log(Troops)", 
+                "(Intercept)" = "Intercept")
+
+
+coef.names.fit <- c("(Intercept)" = "Intercept",
+                    "country sd__(Intercept)" = "Std. Dev. Country Intercepts",
+                    "year sd__(Intercept)" = "Std. Dev. Year Intercepts",
+                    "pss" = "Post-Warmup Samples")
+
+gof.map <- gof_map
+gof.map$omit <- FALSE
+groups <- tibble("X1" = "#Groups", "X2" = n_distinct(op.protest.1$data$country), "X3" = n_distinct(op.protest.2$data$country), "X4" = n_distinct(op.protest.3$data$country), "X5" = n_distinct(op.protest.4$data$country), "X6" = n_distinct(op.protest.5$data$country))
+
+samples <- tibble("X1" = "Post-Warmup Iterations", "X2" = sum(op.protest.1[["fit"]]@sim[["warmup2"]]), "X3" = sum(op.protest.2[["fit"]]@sim[["warmup2"]]), "X4" = sum(op.protest.3[["fit"]]@sim[["warmup2"]]), "X5" = sum(op.protest.4[["fit"]]@sim[["warmup2"]]), "X6" = sum(op.protest.5[["fit"]]@sim[["warmup2"]]))
+
+addedrows <- bind_rows(groups, samples)
+
+
+# Model specific information for main text
+op.models.table <- modelsummary::modelsummary(op.model.list,
+                                              stars = FALSE,
+                                              statistic_vertical = FALSE,
+                                              coef_omit = "cor",
+                                              coef_rename = NULL,
+                                              coef_map = coef.names.fit,
+                                              gof_omit = "pss|algorithm",
+                                              gof_map = gof.map,
+                                              add_rows = addedrows,
+                                              caption = "Predictive Models of Protest \\label{tab:predictiveopinionmodels}",
+                                              output = "latex") %>% 
+  kable_styling(latex_options = "striped", protect_latex = TRUE, font_size = 9) %>%
+  column_spec(1, width = "4.25cm") %>% 
+  column_spec(2, width = "2.0cm") %>% 
+  column_spec(3, width = "2.0cm") %>% 
+  column_spec(4, width = "2.0cm") %>% 
+  column_spec(5, width = "2.0cm") %>%
+  column_spec(6, width = "2.0cm") %>% 
+  save_kable(here("Tables/Chapter-Protests/model-protest-predictions.tex"),
+             keep_tex = TRUE)
+
+
+
+
+
+```
+
+
+## Full Tables
+
+```{r Protest full specification model}
+
+
+op.protest.1 <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/op.protest.1.rds")
+op.protest.2 <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/op.protest.2.rds")
+op.protest.3 <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/op.protest.3.rds")
+op.protest.4 <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/op.protest.4.rds")
+op.protest.5 <- readRDS("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Output/Chapter-Protests/op.protest.5.rds")
+
+op.model.list <- list("Intercept Only" = op.protest.1, 
+                      "Demographics Only" = op.protest.2,
+                      "Demographics and Attitudinal" = op.protest.3,
+                      "Country and Province Variables" = op.protest.4, 
+                      "Full w/Varying Coefficients" = op.protest.5)
+
+
+class(op.model.list[[1]]) = c("custom", class(op.model.list[[1]]))
+class(op.model.list[[2]]) = c("custom", class(op.model.list[[2]]))
+class(op.model.list[[3]]) = c("custom", class(op.model.list[[3]]))
+class(op.model.list[[4]]) = c("custom", class(op.model.list[[4]]))
+class(op.model.list[[5]]) = c("custom", class(op.model.list[[5]]))
+
+
+coef.list <- c("minorityYes" = "Minority: Yes",
+               "minorityDeclinetoanswer" = "Minority: DK/Decline",
+               "age25to34years" = "25-34",
+               "age35to44years" = "35-44",
+               "age45to54years" = "45-54",
+               "age55to64years" = "55-65",
+               "ageAge65orolder" = ">65",
+               "ed_z" = "Education",
+               "ideology_z" = "Ideology",
+               "income.5.cat21M40%" = "21-40",
+               "income.5.cat41M60%" = "41-60",
+               "income.5.cat61M80%" = "61-80",
+               "income.5.cat81M100%" = "81-100",
+               "genderFemale" = "Female",
+               "genderNonMbinary" = "Non-binary",
+               "genderNoneoftheabove" = "None of the above",
+               "contact_persDontknowDdeclinetoanswer" = "Contact: DK/Decline",
+               "contact_persYes" = "Contact: Yes",
+               "contact_nonpersDontknowDdeclinetoanswer" = "Network Contact: DK/Decline",
+               "contact_nonpersYes" = "Network Contact: Yes",
+               "benefit_persDontknowDdeclinetoanswer" = "Benefit: DK/Decline",
+               "benefit_persYes" = "Benefit: Yes",
+               "troops_crime_persYes" = "Crime Experience: Yes",
+               "american_inf_1DontknowDdeclinetoanswer" = "Influence 1: DK/Decline",
+               "american_inf_1Alittle" = "Influence 1: A little",
+               "american_inf_1Some" = "Influence 1: Some",
+               "american_inf_1Alot" = "Influence 1: A lot",
+               "american_inf_2DontknowDdeclinetoanswer" = "Influence 2: DK/Decline",
+               "american_inf_2Veryative" = "Influence 2: Very negative",
+               "american_inf_2Negative" = "Influence 2: Negative",
+               "american_inf_2Positive" = "Influence 2: Positive",
+               "american_inf_2Veryitive" = "Influence 2: Very positive",
+               "basecount_z" = "Base count",
+               "gdp_z" = "GDP",
+               "pop_z" = "Population",
+               "troops_z" = "Troop deployment size",
+               "Intercept" = "Intercept")
+
+
+# Calculate LOO IC
+tic()
+loo.1 <- loo(op.protest.1)
+loo.2 <- loo(op.protest.2)
+loo.3 <- loo(op.protest.3)
+loo.4 <- loo(op.protest.4)
+loo.5 <- loo(op.protest.5)
+toc()
+
+
+
+addedrows <- tribble(~term, ~`Intercept Only`, ~`Demographics Only`, ~`Demographics and Attitudinal`, ~`Country and Province Variables`, ~`Full w/Varying Coefficients`,
+                     "LOOIC", loo.1[["estimates"]][[3]], loo.2[["estimates"]][[3]], loo.3[["estimates"]][[3]], loo.4[["estimates"]][[3]], loo.5[["estimates"]][[3]])
+  
+  
+# tidy method extracts level names into new column
+tidy.custom = broom.mixed:::tidy.brmsfit
+glance.custom = function(x, ...) {
+  ret <- data.frame(
+    "Link" = x$family$link,
+    "Family" = x$family$family,
+    "N" = nrow(x$data),
+    `Num Groups (Country)` = summary(x)$ngrps$country,
+    `Num Groups (Year)` = summary(x)$ngrps$year
+  )
+  colnames(ret) <- c("Link", "Family", "N", "Num Groups (Country)", "Num Groups (Year)")
+  ret
+}
+
+
+
+tic()
+# Troops Model
+panel.1 <- modelsummary::modelsummary(op.model.list,
+                                      statistic = "conf.int",
+                                      stars = FALSE,
+                                      coef_map = coef.list,
+                                      add_rows = addedrows,
+                                      longtable = TRUE,
+                                      caption = "Bayesian multilevel logistic regressions predicting protest \\label{tab:predictiveopinionmodels}",
+                                      output = "latex") 
+
+
+panel.2 <- panel.1 %>%  
+  kable_styling(latex_options = c("striped", "scale_down", "repeat_header"), protect_latex = TRUE, font_size = 7, position = "left",
+                stripe_index = c(1:2, 5:6, 9:10, 13:14, 17:18, 21:22, 25:26, 29:30, 33:34, 37:38, 41:42, 45:46, 49:50, 53:54, 57:58, 61:62, 65:66, 69:70)) %>%
+  pack_rows("Minority Status", 1, 4, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Age", 5, 14, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Income Quantile", 19, 24, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Gender Identification", 27, 32, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Interpersonal Contact", 33, 36, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Network Contact", 37, 40, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Economic Benefits", 41, 44, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Personal Experience with Crime", 45, 46, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Amount of U.S. Influence", 47, 54, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Quality of U.S. Influence", 55, 60, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Group-level Variables", 61, 68, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Model Fit and Performance", 69, 74, bold = TRUE, background = "gray", color = "white") %>% 
+  landscape() %>% 
+  save_kable(., file = here("Tables/Chapter-Protests/model-protest-full.tex"),
+             keep_tex = TRUE)
+
+toc()
+
+
+```
+
+
+## Prediction Assessment
+
+### Percent Predicted Correctly
+
+```{r Percent predicted correctly}
+
+op.protest.1$data$predicted <- as.data.frame(predict(op.protest.1))
+op.protest.2$data$predicted <- as.data.frame(predict(op.protest.2))
+op.protest.3$data$predicted <- as.data.frame(predict(op.protest.3))
+op.protest.4$data$predicted <- as.data.frame(predict(op.protest.4))
+op.protest.5$data$predicted <- as.data.frame(predict(op.protest.5))
+
+
+op.predict.list <- list(op.protest.1$data, op.protest.2$data, op.protest.3$data, op.protest.4$data, op.protest.5$data)
+
+prob = 0.01
+
+# Huzzah!
+op.predict.list.2 <- lapply(op.predict.list, function(x) 
+                         dplyr::select(x, predicted, protest_dummy) %>% 
+                         mutate(predicted.value = ifelse(predicted$Estimate >= 0.5, 1, 0),
+                                match = ifelse(protest_dummy == "Yes" & predicted.value == 1 | protest_dummy == "No" & predicted.value == 0, 1, 0),
+                         percent.correct = sum(match)/length(match),
+                         false.neg = ifelse(predicted.value == 0 & protest_dummy == "Yes", 1, 0),
+                         false.pos = ifelse(predicted.value == 1 & protest_dummy == "No", 1, 0),
+                         true.neg = ifelse(protest_dummy == "No" & predicted.value == 0, 1, 0),
+                         true.pos = ifelse(protest_dummy == "Yes" & predicted.value == 1, 1, 0),
+                         total.no = ifelse(protest_dummy == "No", 1, 0),
+                         total.yes = ifelse(protest_dummy == "Yes", 1, 0)) %>% 
+                         dplyr::summarise(percent.correct = mean(percent.correct),
+                                          false.neg = sum(false.neg),
+                                          false.pos = sum(false.pos),
+                                          true.neg = sum(true.neg),
+                                          true.pos = sum(true.pos),
+                                          total.no = sum(total.no),
+                                          total.yes = sum(total.yes)) %>% 
+                         mutate(`False Positive Rate` = false.pos/total.no,
+                                `False Negative Rate` = false.neg/total.yes,
+                                `Sensitivity` = true.pos/total.yes,
+                                `Specificity` = true.neg/total.no))
+
+op.predict.df <- bind_rows(op.predict.list.2) %>% 
+  mutate(Model = c("Intercept Only", "Demographics Only", "Demographics and Attitudinal", "Country and Province Variables", "Full w/Varying Coefficients")) %>% 
+  dplyr::select(Model, percent.correct, `False Positive Rate`, `False Negative Rate`, `Sensitivity`, `Specificity`) %>% 
+  mutate_at(vars(2:6),
+            ~ paste((round(., 3)*100), "%", sep = ""))
+
+names(op.predict.df) <- c("Model", "Correct", "False Positive", "False Negative", "Sensitivity", "Specificity")
+
+op.predict.table <- kable(op.predict.df, "latex", align = "lrrrrr", caption = "Predictive Model Performance \\label{tab:predictivecheck}", booktabs = TRUE) %>% 
+  kable_styling(latex_options = "striped", font_size = 10) %>% 
+  column_spec(1, width = "5cm") %>% 
+  column_spec(2, width = "1.8cm") %>% 
+  column_spec(3, width = "1.8cm") %>% 
+  column_spec(4, width = "1.8cm") %>% 
+  column_spec(5, width = "1.8cm") %>% 
+  column_spec(6, width = "1.8cm") %>% 
+  footnote(number = c("Correct predictions is the number of predicted values that match observed values divided by the total number of observations.",
+                      "False positive rate is the number of incorrect positive predicted cases divided by the total number of actual observed negative cases. Rather, the percent of negative cases incorrectly classified as positive.", 
+                      "False negative rate is the number of incorrect negative predicted cases divided by the total number of actual observed positive cases. Rather, the percent of positive cases incorrectly classified as negative.",
+                      "Sensitivity is the number of predicted positive values divided by the total number of true positive values. Rather, the percent of positive cases that are correctly classified.",
+                      "Specificity is the number of predicted negative values divided by the total number of true negative values. Rather, the percent of negative cases that are correctly classified."),
+           fixed_small_size = TRUE,
+           footnote_as_chunk = FALSE,
+           threeparttable = TRUE) %>% 
+  save_kable(here("Tables/Chapter-Protests/model-protest-predict-stats.tex"),
+             keep_tex = TRUE)
+
+  
+```
+
+
+### ROC Plot
+
+```{r ROC plot}
+
+
+# Create loop to generate ROC curve for different p values
+results <- list()
+
+prob <-  1
+
+for(prob in 1:1000) {
+# Huzzah!
+  
+op.predict.list.2 <- lapply(op.predict.list, function(x) 
+  dplyr::select(x, predicted, protest_dummy) %>% 
+    mutate(predicted.value = ifelse(predicted$Estimate >= (prob/1000), 1, 0),
+           match = ifelse(protest_dummy == "Yes" & predicted.value == 1 | protest_dummy == "No" & predicted.value == 0, 1, 0),
+           percent.correct = sum(match)/length(match),
+           false.neg = ifelse(predicted.value == 0 & protest_dummy == "Yes", 1, 0),
+           false.pos = ifelse(predicted.value == 1 & protest_dummy == "No", 1, 0),
+           true.neg = ifelse(protest_dummy == "No" & predicted.value == 0, 1, 0),
+           true.pos = ifelse(protest_dummy == "Yes" & predicted.value == 1, 1, 0),
+           total.no = ifelse(protest_dummy == "No", 1, 0),
+           total.yes = ifelse(protest_dummy == "Yes", 1, 0)) %>% 
+    dplyr::summarise(percent.correct = mean(percent.correct),
+                     false.neg = sum(false.neg),
+                     false.pos = sum(false.pos),
+                     true.neg = sum(true.neg),
+                     true.pos = sum(true.pos),
+                     total.no = sum(total.no),
+                     total.yes = sum(total.yes)) %>% 
+    mutate(`False Positive Rate` = false.pos/total.no,
+           `False Negative Rate` = false.neg/total.yes,
+           `Sensitivity` = true.pos/total.yes,
+           `Specificity` = true.neg/total.no,
+           pvalue = prob/1000))
+
+op.predict.df <- bind_rows(op.predict.list.2) %>% 
+  mutate(Model = c("Intercept Only", "Demographics Only", "Demographics and Attitudinal", "Country and Province Variables", "Full w/Varying Coefficients")) %>% 
+  dplyr::select(Model, percent.correct, `False Positive Rate`, `False Negative Rate`, `Sensitivity`, `Specificity`, pvalue) 
+
+results[[prob]] <- op.predict.df
+
+prob <- prob + 1 
+}
+
+results.df <- bind_rows(results) %>% 
+  mutate(Model = factor(Model, levels = c("Intercept Only", "Demographics Only", "Demographics and Attitudinal", "Country and Province Variables", "Full w/Varying Coefficients")))
+
+
+roc.plot <- ggplot(results.df, aes(x = 1- Specificity, y = Sensitivity, color = Model, fill = Model)) +
+  geom_line(size = 1) +
+  geom_abline(intercept = 0, slope = 1, color = "black", size = 1, linetype = "dashed") +
+  scale_x_continuous(expand = c(0, 0), labels = percent_format()) +
+  scale_y_continuous(expand = c(0, 0), labels = percent_format()) +
+  scale_color_brewer(palette = "Set2") +
+  theme_flynn +
+  labs(x = "False Positive Rate",
+       y = "True Positive Rate",
+       title = "ROC plot for individual protest models")
+
+roc.plot
+
+ggsave(here("Figures/Chapter-Protests/fig-roc-plot.png"), width = 8, height = 5, units = "in")
+
+
+### p value comparison plot
+ggplot(results.df) +
+  geom_line(aes(x = pvalue, y = Sensitivity, color = "Sensitivity"), size = 1) +
+  geom_line(aes(x = pvalue, y = Specificity, color = "Specificity"), linetype = "longdash", size = 1) +
+  geom_line(aes(x = pvalue, y = percent.correct, color = "Percent Correct"), linetype = "dashed", size = 1) +
+  facet_wrap(. ~ Model, ncol = 2) +
+  scale_y_continuous(breaks = seq(0, 1, 0.20), labels = percent_format()) +
+  scale_color_brewer(palette = "Set2") +
+  theme_flynn +
+  labs(x = "Probability threshold",
+       y = "Percent",
+       color = "Statistic")
+
+ggsave(here("Figures/Chapter-Protests/fig-pvalue-comparison.png"), width = 8, height = 6, units = "in")
+
+
+```
+
+## Percent Predicted Correctly (Targeted)
+
+```{r Percent Predicted Correctly Targeted, echo=FALSE}
+
+# Get rough estimate for point at which sensitivity and specificity are equal
+summary(results.df$pvalue[round(results.df$Sensitivity, 2) == round(results.df$Specificity, 2) & results.df$Model=="Full w/Varying Coefficients"])
+
+
+results.df.targeted <- results.df %>% 
+  filter(pvalue == 0.100) %>% 
+  dplyr::select(Model, percent.correct, `False Positive Rate`, `False Negative Rate`, `Sensitivity`, `Specificity`) %>% 
+  mutate_at(vars(2:6),
+            ~ paste((round(., 3)*100), "%", sep = ""))
+
+names(results.df.targeted) <- c("Model", "Correct", "False Positive", "False Negative", "Sensitivity", "Specificity")
+
+op.predict.table.targeted <- kable(results.df.targeted, "latex", align = "lrrrrr", caption = "Predictive Model Performance with targeted probability threshold of 0.10 \\label{tab:predictivechecktargeted}", booktabs = TRUE) %>% 
+  kable_styling(latex_options = "striped", font_size = 10) %>% 
+  column_spec(1, width = "5cm") %>% 
+  column_spec(2, width = "1.8cm") %>% 
+  column_spec(3, width = "1.8cm") %>% 
+  column_spec(4, width = "1.8cm") %>% 
+  column_spec(5, width = "1.8cm") %>% 
+  column_spec(6, width = "1.8cm") %>% 
+  footnote(number = c("Correct predictions is the number of predicted values that match observed values divided by the total number of observations.",
+                      "False positive rate is the number of incorrect positive predicted cases divided by the total number of actual observed negative cases. Rather, the percent of negative cases incorrectly classified as positive.", 
+                      "False negative rate is the number of incorrect negative predicted cases divided by the total number of actual observed positive cases. Rather, the percent of positive cases incorrectly classified as negative.",
+                      "Sensitivity is the number of predicted positive values divided by the total number of true positive values. Rather, the percent of positive cases that are correctly classified.",
+                      "Specificity is the number of predicted negative values divided by the total number of true negative values. Rather, the percent of negative cases that are correctly classified."),
+           fixed_small_size = TRUE,
+           footnote_as_chunk = FALSE,
+           threeparttable = TRUE) %>% 
+  save_kable(here("Tables/Chapter-Protests/model-protest-predict-stats-targeted.tex"),
+             keep_tex = TRUE)
+
+
+```
+
+
+## Negative Binomial Tables
+
+```{r}
+
+
+coef.map <- list("Intercept" = "Intercept",
+     "troops_c_mean_z" = "Troops (Between)", "troops_c_demeaned_z" = "Troops (Within)",
+     "troops_w_mean_c_mean_z" = "Regional Troops (Between)", "troops_w_mean_c_demeaned_z" = "Regional Troops (Within)",
+     "v2x_polyarchy_c_mean_z"= "Polyarchy (Between)", "v2x_polyarchy_c_demeaned_z" = "Polyarchy (Within)",
+     "exports_from_us_c_mean_z" = "U.S. Exports (Between)", "exports_from_us_c_demeaned_z" = "U.S. Exports (Within)",
+     "gdp_c_mean_z" = "GDP (Between)", "gdp_c_demeaned_z" = "GDP (Within)",
+     "gdp_growth_c_mean_z" = "Growth (Between)", "gdp_growth_c_demeaned_z" = "Growth (Within)",
+     "v2x_polyarchy_c_mean_z_sq" = "Polyarchy Squared (Between)", "v2x_polyarchy_c_demeaned_z_sq" = "Polyarchy Squared (Within)",
+     "troops_c_mean_z:v2x_polyarchy_change_c_mean_z" = "Troops $\\times$ Polyarchy (Between)", "troops_c_demeaned_z:v2x_polyarchy_change_c_demeaned_z" = "Troops $\\times$ Polyarchy (Within)",
+     "troops_c_mean_z:gdp_growth_c_mean_z" = "Troops $\\times$ Growth (Between)", "troops_c_demeaned_z:gdp_growth_c_demeaned_z" = "Troops $\\times$ Growth (Within)",
+     "pop_c_mean_z" = "Population (Between)", "pop_c_demeaned_z" = "Population (Within)",
+     "protest_other_c_mean_z_lag" = "Protests (Between)", "protest_other_c_demeaned_z_lag" = "Protests (Within)",
+     "protest_other_w_mean_c_mean_z_lag" = "Regional Protests (Between)", "protest_other_w_mean_c_demeaned_z_lag" = "Regional Protests (Within)",
+     "idealdistance_2_c_mean_z" = "Ideal Distance (Between)", "idealdistance_2_c_demeaned_z" = "Ideal Distance (Within)",
+     "conflict_dummy_c_mean_z" = "Conflict (Between)", "conflict_dummy_c_demeaned_z" = "Conflict (Within)",
+     "us_war_c_mean" = "U.S. War (Between)", "us_war_c_demeaned" = "U.S. War (Within)",
+     "us_war_w_mean_c_mean_z" = "U.S. War in Region (Between)", "us_war_w_mean_c_demeaned_z" = "U.S. War in Region (Within)",
+     "us_ally_c_mean" = "U.S. Ally (Between)", "us_ally_c_demeaned" = "U.S. Ally (Within)",
+     "defburden_w_mean_c_mean_z" = "Regional Military Spending (Between)", "defburden_w_mean_c_demeaned_z" = "Regional Military Spending (Within)",
+     "anti_us_protest_w_mean_c_mean_z_lag" = "Spatial Lag (Between)", "anti_us_protest_w_mean_c_demeaned_z_lag" = "Spatial Lag (Within)")
+
+
+               
+gof.stats <- list("Varying Intercepts" = c("Yes", "Yes", "Yes", "Yes"),
+                  "Group" = c("Country", "Country", "Country", "Country"),
+                  "\\# Groups" = c(us.1[["fit"]]@par_dims[["r_1_1"]], 
+                                   us.2[["fit"]]@par_dims[["r_1_1"]], 
+                                   us.3[["fit"]]@par_dims[["r_1_1"]], 
+                                   us.4[["fit"]]@par_dims[["r_1_1"]]),
+                  "Serial Correlation" = c(round(mean(us.1[["fit"]]@sim[["samples"]][[1]][["ar[1]"]]), 2), " ", " ", " "),
+                  "Dispersion Parameter" = c(mean(us.1[["fit"]]@sim[["samples"]][[1]][["shape"]]),
+                                             mean(us.2[["fit"]]@sim[["samples"]][[1]][["shape"]]),
+                                             mean(us.3[["fit"]]@sim[["samples"]][[1]][["shape"]]),
+                                             mean(us.4[["fit"]]@sim[["samples"]][[1]][["shape"]])))
+
+table.us.list <- list(us.1, us.2, us.3, us.4)
+
+table.us <- texreg(table.us.list,
+                   pars = c("b", "ar[1]", "shape"),
+                   custom.coef.map = coef.map,
+                   custom.gof.rows = gof.stats,
+                   custom.gof.names = c("Std. Dev.", "R$^2$", "N"),
+                   reorder.gof = c(1, 2, 3, 4, 5, 6, 7, 8),
+                   digits = 2,
+                   single.row = TRUE,
+                   leading.zero = TRUE,
+                   regex = TRUE,
+                   caption = "Bayesian Negative Binomial Models of Anti-U.S. Protest Events.",
+                   caption.above = TRUE,
+                   table = TRUE,
+                   scalebox = 0.5,
+                   dcolumn = TRUE,
+                   float.pos = "t",
+                   booktabs = TRUE,
+                   include.loo.ic = FALSE,
+                   include.waic = FALSE,
+                   file = here("Tables/Chapter-Protests", "models-us-protest-nbreg-20200605.tex"))
+
+
+
+gof.stats <- list("Varying Intercepts" = c("Yes", "Yes", "Yes", "Yes"),
+                  "Group" = c("Country", "Country", "Country", "Country"),
+                  "\\# Groups" = c(mil.1[["fit"]]@par_dims[["r_1_1"]], mil.2[["fit"]]@par_dims[["r_1_1"]], mil.3[["fit"]]@par_dims[["r_1_1"]], mil.4[["fit"]]@par_dims[["r_1_1"]]))
+
+table.mil.list <- list(mil.1, mil.2, mil.3, mil.4)
+
+table.mil <- texreg(table.mil.list,
+                   pars = c("b", "ar"),
+                   include.loo.ic = FALSE,
+                   include.waic = FALSE,
+                   custom.coef.map = coef.map,
+                   custom.gof.rows = gof.stats,
+                   custom.gof.names = c("Std. Dev.", "R$^2$", "N"),
+                   reorder.gof = c(1, 2, 3, 4, 5, 6),
+                   digits = 2,
+                   single.row = TRUE,
+                   leading.zero = TRUE,
+                   regex = TRUE,
+                   caption = "Bayesian Negative Binomial Models of Anti-U.S. Military Protest Events.",
+                   caption.above = TRUE,
+                   table = TRUE,
+                   scalebox = 0.5,
+                   dcolumn = TRUE,
+                   float.pos = "t",
+                   booktabs = TRUE,
+                   file = here("Tables/Chapter-Protests", "models-mil-protest-nbreg-20200605.tex"))
+
+
+
+```
+

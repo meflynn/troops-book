@@ -1,0 +1,706 @@
+---
+title: "Outside the wire: The social, political, and economic effects of the United States' overseas military presence"
+subtitle: "Data Setup and Cleaning"
+author: "Michael Flynn"
+date: "`r Sys.Date()'"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r setup}
+library(tidyverse)
+library(WDI)
+library(psych)
+library(tidyquant)
+library(modelr)
+library(cshapes)
+library(countrycode)
+library(dagitty)
+library(ggdag)
+library(arm)
+library(brms)
+library(rstan)
+library(parallel)
+library(tidybayes)
+library(rmapshaper)
+library(maptools)
+library(GADMTools)
+library(rgeos)
+library(GADMTools)
+library(sp)
+library(troopdata)
+library(raster)
+library(ggdist)
+library(kableExtra)
+library(BayesPostEst)
+library(texreg)
+library(ggExtra)
+library(ggmcmc)
+library(ggpubr)
+library(here)
+library(arm)
+library(tictoc)
+library(cmdstanr)
+
+
+
+#install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+#cmdstanr::install_cmdstan()
+
+```
+
+
+# Introduction
+
+This file contains all of the script necessary to load and clean the raw data, transform/rescale variables, and generate whatever additional measures are necessary to run our final models. 
+
+Notes:
+
+1. We use the 2017, 2018, and 2019 values for trade, GDP, population, and V-Dem scores. Will update this once newest data become available. 
+
+
+## Public opinion data setup
+
+```{r Base in Province Code}
+
+# Create list for base location data 
+base.list <- list()
+file.names <- list.files(here("../Geographic files/Base locations"), pattern = ".csv", full.names = TRUE)
+base.list <- lapply(file.names, read_csv)
+
+# Create list of map files
+map.list <- list()
+province.list <- list()
+
+map.list[[1]]  <- getData("GADM", country = "AUS", level = 1)
+map.list[[2]]  <- getData("GADM", country = "BEL", level = 2)
+map.list[[3]]  <- getData("GADM", country = "DEU", level = 1)
+map.list[[4]]  <- getData("GADM", country = "ITA", level = 1)
+map.list[[5]]  <- readOGR(here("../Military Spending/Shapefiles/japanpolygonChubu Region_AL375/Chubu Region_AL3.shp"))
+map.list[[6]]  <- getData("GADM", country = "KWT", level = 1)
+map.list[[7]]  <- getData("GADM", country = "NLD", level = 1)
+map.list[[8]]  <- getData("GADM", country = "PHL", level = 1)
+map.list[[9]]  <- getData("GADM", country = "POL", level = 1)
+map.list[[10]] <- getData("GADM", country = "PRT", level = 1)
+map.list[[11]] <- readOGR(here("../Military Spending/Shapefiles/Korea regions/Korea-regions.shp"))
+map.list[[12]] <- getData("GADM", country = "ESP", level = 1)
+map.list[[13]] <- getData("GADM", country = "TUR", level = 1)
+map.list[[14]] <- readOGR(here("../Military Spending/Shapefiles/UK regions/UK-regions.shp"))
+
+# Create empty lists for point in poly output and final data frame output
+point.list <- list()
+final.list <- list()
+
+# Process the base data for the point in poly procedure
+# Remove missing values from South Korea data frame and apply coordinates to the base location lists
+# Have to run England separately, so it's embedded in an if-else statement
+for (i in 1:14){
+
+if (i < 14) {
+  base.list[[i]] <- as.data.frame(base.list[[i]])
+  base.list[[i]] <- dplyr::filter(base.list[[i]], !is.na(base.list[[i]]$Latitude))
+  sp::coordinates(base.list[[i]]) <- c("Longitude", "Latitude")
+  as(base.list[[i]], "SpatialPoints")
+  proj4string(base.list[[i]]) <- CRS("+proj=longlat +datum=WGS84")
+  proj4string(base.list[[i]]) <- proj4string(map.list[[i]])
+  point.list[[i]] <- sp::over(base.list[[i]], map.list[[i]])
+  final.list[[i]] <- cbind(base.list[[i]]@data, base.list[[i]]@coords, point.list[[i]])
+}
+  else {
+  map.list[[i]] <- spTransform(map.list[[i]], CRS("+proj=longlat +datum=WGS84"))
+  sp::coordinates(base.list[[i]]) <- c("Longitude", "Latitude")
+  as(base.list[[i]], "SpatialPoints")
+  proj4string(base.list[[i]]) <- CRS("+proj=longlat +datum=WGS84")
+  proj4string(base.list[[i]]) <- proj4string(map.list[[i]])
+  point.list[[i]] <- sp::over(base.list[[i]], map.list[[i]])
+  final.list[[i]] <- cbind(base.list[[i]]@data, base.list[[i]]@coords, point.list[[i]])
+  }
+}
+
+
+# Philippines regions
+Bangsamoro <- c("Basilan", "Cotabato city", "Lanao del sur", "Maguindanao", "Sulu", "Tawi-tawi")
+Bicol <- c("Albay", "Camarines norte", "Camarines sur", "Catanduanes", "Masbate", "Naga", "Sorsogon")
+Cagayan <- c("Batanes", "Cagayan", "Isabela", "Nueva vizcaya", "Quirino", "Santiago")
+Caraga <- c("Agusan del norte", "Agusan del sur", "Butuan", "Dinagat islands", "Surigao del norte", "Surigao del sur")
+Central.luzon <- c("Angeles", "Aurora", "Bataan", "Bulacan", "Nueva ecija", "Olongapo", "Pampanga", "Tarlac", "Zambales")
+Central.visayas <- c("Bohol", "Cebu", "Cebu city", "Lapu-lapu", "Mandaue", "Negros oriental", "Siquijor", "Compostela")
+Cordillera <- c("Abra", "Apayao", "Baguio", "Benguet", "Ifugao", "Kalinga", "Mountain province")
+Davao <- c("Davao city", "Davao de oro", "Davao del norte", "Davao del sur", "Davao oriental", "Davao occidental")
+Eastern.visayas <- c("Biliran", "Eastern samar", "Leyte", "Northern samar", "Ormoc", "Samar", "Eastern semar", "Southern leyte", "Tacloban")
+Ilocos <- c("Dagupan", "Ilocos norte", "Ilocos sur", "La union", "Pangasinan")
+National.capital <- c("Caloocan", "Las pinas", "Makati", "Malabon", "Mandaluyong", "Manila", "Marikina", "Muntinlupa", "Navotas", "Paranaque", "Pasay", "Pasig", "Pateros", "Quezon city", "San juan", "Taguig", "Valenzuela")
+Nothern.mindanao <- c("Bukidnon", "Cagayan de oro", "Camiguin", "Iligan", "Lanao del norte", "Misamis occidental", "Misamis oriental")
+Soccskargen <- c("Cotabato", "General santos", "Sarangani", "South cotabato", "Sultan kudarat")
+Southern.tagalog.mainland <- c("Batangas", "Cavite", "Laguna", "Lucena", "Quezon", "Rizal")
+Southwestern.tagalog.region <- c("Marinduque", "Occidental mindoro", "Oriental mindoro", "Palawan", "Puerto princesa", "Romblon", "Southewestern tagalog region")
+Western.visayas <- c("Aklan", "Antique", "Bacolod", "Capiz", "Guimaras", "Iloilo", "Illoilo", "Iloilo city", "Negros occidental")
+Zamgoanga.peninsula <- c("Isabela city", "Zamboanga city", "Zamboanga del norte", "Zamboanga del sur", "Zamboanga sibugay")
+
+# Turkey regions (NUTS-2)
+Adana <- c("Adana", "Mersin")
+Agri <- c("Agri", "Kars", "Igdir", "Ardahan", "Igdir")
+Ankara <- c("Ankara")
+Antalya <- c("Antalya", "Isparta", "Burdur")
+Aydin <- c("Aydin", "Denizli", "Mugla")
+Balikesir <- c("Balikesir", "Canakkale")
+Bursa <- c("Bursa", "Eskisehir", "Bilecik")
+Erzurum <- c("Erzurum", "Erzincan", "Bayburt")
+Gaziantep <- c("Gaziantep", "Adiyaman", "Kilis")
+Hatay <- c("Hatay", "Kahramanmaras", "Osmaniye", "K. Maras")
+Istanbul <- c("Istanbul", "Byzantine")
+Izmir <- c("Izmir")
+Kocaeli <- c("Kocaeli", "Sakarya", "Duzce", "Bolu", "Yalova", 'D"uzce')
+Konya <- c("Konya", "Karaman")
+Kirikkale <- c("Kirikkale", "Aksaray", "Nigde", "Nevsehir", "Kirsehir")
+Kayseri <- c("Kayseri", "Sivas", "Yozgat")
+Kastamonu <- c("Kastamonu", "Cankiri", "Sinop")
+Malatya <- c("Malatya", "Elazig", "Bingol", "Tunceli", 'Bing"ol')
+Manisa <- c("Manisa", "Afyonkarahisar", "Kutahya", "Usak", 'K"utahya')
+Mardin <- c("Mardin", "Batman", "Sirnak", "Siirt")
+Samsun <- c("Samsun", "Tokat", "Corum", "Amasya")
+Sanliurfa <- c("Sanliurfa", "Diyarbakir")
+Tekirdag <- c("Tekirdag", "Edirne", "Kirkalareli")
+Trabzon <- c("Trabzon", "Ordu", "Giresun", "Rize", "Artvin", "Gumushane", 'G"um"ushane')
+Van <- c("Van", "Mus", "Bitlis", "Hakkari", "Hakk^ari")
+Zonguldak <- c("Zonguldak", "Karabuk", 'Karab"uk', "Bartin")
+
+
+base.provinces <- bind_rows(final.list) %>% 
+  dplyr::select(`Country Name`, `Country code`, base, NAME_1, NAME_2, NAME, name) %>% 
+  mutate(province.name = ifelse(!is.na(NAME), NAME,
+                                ifelse(!is.na(name), name,
+                                       ifelse(!is.na(NAME_2), NAME_2, NAME_1)))) %>% 
+  group_by(`Country Name`, province.name) %>% 
+  dplyr::summarise(basecount = sum(base, na.rm = TRUE)) %>% 
+  filter(!is.na(province.name)) %>% 
+  dplyr::rename("province" = "province.name", "country" = "Country Name") %>% 
+    mutate(country = ifelse(country == "Poland, Rep. of", "Poland", country),
+           country = ifelse(country == "Korea, Rep. of", "South Korea", country),
+           country = ifelse(country == "Netherlands, The", "Netherlands", country),
+      province = str_to_sentence(province),
+      province = ifelse(province == "Andalucia", "Andalusia", province),
+         province = ifelse(province == "Bragan?a", "Braganca", province),
+         province = ifelse(province == "Cagayan", "Cagayan valley", province),
+         province = ifelse(province == "Castilla y leon	", "Castile and leon", province),
+         province = ifelse(province == "Cataluna", "Catalonia", province),
+         province = ifelse(province == "Ceuta y melilla", "Ceuta", province),
+         province = ifelse(province == "Comunidad de madrid", "Community of madrid", province),
+         province = ifelse(province == "Comunidad foral de navarra" | province == "Navarre", "Chartered community of navarre", province),
+         province = ifelse(province == "Islas canarias", "Canary islands", province),
+         province = ifelse(province == "Islas baleares", "Balearic islands", province),
+         province = ifelse(province == "Kahramanmars", "Kahramanmaras", province),
+         province = ifelse(province == "Kills", "Kilis", province),
+         province = ifelse(province == "Kinkkale", "Kirikkale", province),
+         province = ifelse(province == "Kuyavian-pomeranian", "Kuyavia-pomerania", province),
+         province = ifelse(province == "Kyushu-okinawa", "Kyushu", province),
+         province = ifelse(province == "Lower silesian", "Lower silesia", province),
+         province = ifelse(province == "Lubuskie", "Lubusz", province),
+         province = ifelse(province == "Masovian", "Masovia", province),
+         province = ifelse(province == "Misamis", "Misamis oriental", province),
+         province = ifelse(province == "Masovian", "Masovia", province),
+         province = ifelse(province == "Masovian", "Masovia", province),
+         province = ifelse(province == "Namen", "Namur", province),
+         province = ifelse(province == "Osmanlye", "Osmaniye", province),
+         province = ifelse(province == "Pais vasco" | province == "Basaque autonomous community", "Basque autonomous community", province),
+         province = ifelse(province == "Podlasie", "Podlaskie", province),
+         province = ifelse(province == "Pomeranian", "Pomerania", province),
+         province = ifelse(province == "Principado de asturias", "Principality of asturias", province),
+         province = ifelse(province == "Region de murcia", "Region of murcia", province),
+         province = ifelse(province == "South east  (excluding london)", "South east (excluding london)", province),
+         province = ifelse(province == "Subcarpathian", "Subcarpathia", province),
+         province = ifelse(province == "Slaskie", "Silesia",  province),
+         province = ifelse(province == "Swietokrzyskie", "Holy Cross Province", province),
+         province = ifelse(province == "Utecht", "Utrecht", province),
+         province = ifelse(province == "Vlaams-brabant", "Flemish brabant", province),
+         province = ifelse(province == "Brabant wallon", "Walloon brabant", province),
+         province = ifelse(province == "Comunidad valenciana", "Valencian community", province),
+         province = ifelse(province == "Warmian-masurian", "Warmia-masuria", province),
+         province = ifelse(province == "Western-pomeranian", "West pomerania", province),
+         province = ifelse(province == "Zamboanga peninsula", "Zamboanga sibugay", province), # Note: I depart from year 2 values here since this is easier to distinguish and appears more accurate.
+         province = ifelse(province == "Zealand", "Zeeland", province),
+         province = ifelse(country == "Philippines" & province %in% Bangsamoro, "Bangsamoro autonomous region in muslim mindanao", province),
+         province = ifelse(country == "Philippines" & province %in% Bicol, "Bicol region", province),
+         province = ifelse(country == "Philippines" & province %in% Cagayan, "Cagayan valley", province),
+         province = ifelse(country == "Philippines" & province %in% Caraga, "Caraga region", province),
+         province = ifelse(country == "Philippines" & province %in% Central.luzon, "Central luzon", province),
+         province = ifelse(country == "Philippines" & province %in% Central.visayas, "Central visayas", province),
+         province = ifelse(country == "Philippines" & province %in% Cordillera, "Cordillera administrative region", province),
+         province = ifelse(country == "Philippines" & province %in% Davao, "Davao region", province),
+         province = ifelse(country == "Philippines" & province %in% Eastern.visayas, "Eastern visayas", province),
+         province = ifelse(country == "Philippines" & province %in% Ilocos, "Ilocos region", province),
+         province = ifelse(country == "Philippines" & province %in% National.capital, "National capital region", province),
+         province = ifelse(country == "Philippines" & province %in% Nothern.mindanao, "Northern mindanao", province),
+         province = ifelse(country == "Philippines" & province %in% Soccskargen, "Soccsksargen", province),
+         province = ifelse(country == "Philippines" & province %in% Southern.tagalog.mainland, "Southern tagalog mainland", province),
+         province = ifelse(country == "Philippines" & province %in% Southwestern.tagalog.region, "Southwestern tagalog region", province),
+         province = ifelse(country == "Philippines" & province %in% Western.visayas, "Western visayas", province),
+         province = ifelse(country == "Philippines" & province %in% Zamgoanga.peninsula, "Zamgoanga peninsula", province),
+         province = ifelse(country == "Turkey" & province %in% Istanbul, "Istanbul", province),
+         province = ifelse(country == "Turkey" & province %in% Tekirdag, "Tekirdag", province),
+         province = ifelse(country == "Turkey" & province %in% Balikesir, "Balikesir", province),
+         province = ifelse(country == "Turkey" & province %in% Izmir, "Izmir", province),
+         province = ifelse(country == "Turkey" & province %in% Aydin, "Aydin", province),
+         province = ifelse(country == "Turkey" & province %in% Manisa, "Manisa", province),
+         province = ifelse(country == "Turkey" & province %in% Bursa, "Bursa", province),
+         province = ifelse(country == "Turkey" & province %in% Kocaeli, "Kocaeli", province),
+         province = ifelse(country == "Turkey" & province %in% Ankara, "Ankara", province),
+         province = ifelse(country == "Turkey" & province %in% Konya, "Konya", province),
+         province = ifelse(country == "Turkey" & province %in% Antalya, "Antalya", province),
+         province = ifelse(country == "Turkey" & province %in% Adana, "Adana", province),
+         province = ifelse(country == "Turkey" & province %in% Hatay, "Hatay", province),
+         province = ifelse(country == "Turkey" & province %in% Kirikkale, "Kirikkale", province),
+         province = ifelse(country == "Turkey" & province %in% Kayseri, "Kayseri", province),
+         province = ifelse(country == "Turkey" & province %in% Zonguldak, "Zonguldak", province),
+         province = ifelse(country == "Turkey" & province %in% Kastamonu, "Kastamonu", province),
+         province = ifelse(country == "Turkey" & province %in% Samsun, "Samsun", province),
+         province = ifelse(country == "Turkey" & province %in% Trabzon, "Trabzon", province),
+         province = ifelse(country == "Turkey" & province %in% Erzurum, "Erzurum", province),
+         province = ifelse(country == "Turkey" & province %in% Agri, "Agri", province),
+         province = ifelse(country == "Turkey" & province %in% Malatya, "Malatya", province),
+         province = ifelse(country == "Turkey" & province %in% Van, "Van", province),
+         province = ifelse(country == "Turkey" & province %in% Gaziantep, "Gaziantep", province),
+         province = ifelse(country == "Turkey" & province %in% Sanliurfa, "Sanliurfa", province),
+         province = ifelse(country == "Turkey" & province %in% Mardin, "Mardin", province),
+      province = ifelse(country == "United Kingdom" & province == "Eastern", "East anglia", province),
+      province = ifelse(province == "London", "Greater london", province),
+      province = ifelse(province == "South east", "South east (excluding london)", province),
+      province = ifelse(province == "Yorkshire and the humber", "Yorkshire & humberside", province),
+      province = ifelse(province == "Bruxlles", "Brussels-capital region", province),
+      province = ifelse(province == "Apulia", "Puglia", province),
+      province = ifelse(province == "Sicily", "Sicilia", province),
+      province = ifelse(province == "Busan", "Daegu, busan, ulsan & gyeongsang (east)", province),
+      province = ifelse(province == "Chungcheongbuk-do", "Daejeon, sejong & chungcheong (west)", province),
+      province = ifelse(province == "Gwangju", "Jeolla, jeju & gwangju (south)", province),
+      province = ifelse(province == "Incheon", "Seoul, inceon, gyeonggi & gangwon (north)", province),
+      province = ifelse(province == "Al ahmadi", "Ahmadi governorate", province), 
+      province = ifelse(province == "Al farwaniyah", "Farwaniya governorate", province),
+      province = ifelse(province == "Al jahrah", "Jahra governorate", province),
+      province = ifelse(province == "Zuid-holland", "South holland", province),
+      province = ifelse(province == "Metropolitan Manila", "National capital region", province),
+      province = ifelse(grepl("dzkie", province), "Lodz", province),
+      province = ifelse(province == "Pomorskie", "Pomerania", province),
+      province = ifelse(province == "Andalucía", "Andalusia", province),
+      province = ifelse(province == "Chubu region", "Chubu", province),
+      province = ifelse(province == "Chugoku region", "Chugoku", province),
+      province = ifelse(grepl("Hokkai", province), "Hokkaido", province))
+
+
+
+
+
+
+
+
+
+
+```
+
+```{r Opinion Data}
+
+ccode.list <- c("200", "210", "211", "230", "235", "255", "290", "325", "640", "690", "732", "740", "840", "900")
+
+# Base Survey Data
+base.data <- read_csv(here::here("../Book/Raw Data/opinion-data", "data-years-1-2-3-combined-20200820.csv")) %>% 
+  mutate(country = ifelse(country == "Poland, Rep. of", "Poland", country),
+           country = ifelse(country == "Korea, Rep. of", "South Korea", country),
+           country = ifelse(country == "Netherlands, The", "Netherlands", country),
+         province = str_to_sentence(province),
+         province = ifelse(province == "Andaluc'ia", "Andalusia", province),
+         province = ifelse(province == "Arag'on", "Aragon", province),
+         province = ifelse(province == "Castile and le'on", "Castile and leon", province),
+         province = ifelse(province == "Castilla y le'on", "Castile and leon", province),
+         province = ifelse(province == "Catalu~na", "Catalonia", province),
+         province = ifelse(province == "Pa'is vasco", "Pais vasco", province),
+         province = ifelse(province == "Regi'on de murcia", "Region of murcia", province),
+         province = ifelse(province == "Li`ege", "Liege", province),
+         province = ifelse(province == "'Evora", "Evora", province),
+         province = ifelse(province == "Santar'em", "Santarem", province),
+         province = ifelse(province == "Set'ubal", "Setubal", province),
+         province = ifelse(province == 'Baden-w"urttemberg', "Baden-wurttemberg", province),
+         province = ifelse(province == 'Th"uringen', "Thuringen", province),
+         province = ifelse(province == "L'od'z", "Lodz", province),
+         province = ifelse(province == "'Slaskie", "Silesia", province),
+         province = ifelse(province == "Andalucia", "Andalusia", province),
+         province = ifelse(province == "Bragan?a", "Braganca", province),
+         province = ifelse(province == "Cagayan", "Cagayan valley", province),
+         province = ifelse(province == "Castilla y leon	", "Castile and leon", province),
+         province = ifelse(province == "Cataluna", "Catalonia", province),
+         province = ifelse(province == "Ceuta y melilla", "Ceuta", province),
+         province = ifelse(province == "Comunidad de madrid", "Community of madrid", province),
+         province = ifelse(province == "Comunidad foral de navarra" | province == "Navarre", "Chartered community of navarre", province),
+         province = ifelse(province == "Islas canarias", "Canary islands", province),
+         province = ifelse(province == "Islas baleares", "Balearic islands", province),
+         province = ifelse(province == "Kahramanmars", "Kahramanmaras", province),
+         province = ifelse(province == "Kills", "Kilis", province),
+         province = ifelse(province == "Kinkkale", "Kirikkale", province),
+         province = ifelse(province == "Kuyavian-pomeranian", "Kuyavia-pomerania", province),
+         province = ifelse(province == "Kyushu-okinawa", "Kyushu", province),
+         province = ifelse(province == "Lower silesian", "Lower silesia", province),
+         province = ifelse(province == "Lubuskie", "Lubusz", province),
+         province = ifelse(province == "Masovian", "Masovia", province),
+         province = ifelse(province == "Misamis", "Misamis oriental", province),
+         province = ifelse(province == "Masovian", "Masovia", province),
+         province = ifelse(province == "Masovian", "Masovia", province),
+         province = ifelse(province == "Namen", "Namur", province),
+         province = ifelse(province == "Osmanlye", "Osmaniye", province),
+         province = ifelse(province == "Pais vasco" | province == "Basaque autonomous community", "Basque autonomous community", province),
+         province = ifelse(province == "Podlasie", "Podlaskie", province),
+         province = ifelse(province == "Pomeranian", "Pomerania", province),
+         province = ifelse(province == "Principado de asturias", "Principality of asturias", province),
+         province = ifelse(province == "Region de murcia", "Region of murcia", province),
+         province = ifelse(province == "South east  (excluding london)", "South east (excluding london)", province),
+         province = ifelse(province == "Subcarpathian", "Subcarpathia", province),
+         province = ifelse(province == "Slaskie", "Silesia",  province),
+         province = ifelse(province == "Swietokrzyskie", "Holy Cross Province", province),
+         province = ifelse(province == "Utecht", "Utrecht", province),
+         province = ifelse(province == "Vlaams-brabant", "Flemish brabant", province),
+         province = ifelse(province == "Comunidad valenciana", "Valencian community", province),
+         province = ifelse(province == "Warmian-masurian", "Warmia-masuria", province),
+         province = ifelse(province == "Western-pomeranian", "West pomerania", province),
+         province = ifelse(province == "Zamboanga peninsula", "Zamboanga sibugay", province), # Note: I depart from year 2 values here since this is easier to distinguish and appears more accurate.
+         province = ifelse(province == "Zealand", "Zeeland", province),
+         province = ifelse(country == "Philippines" & province %in% Bangsamoro, "Bangsamoro autonomous region in muslim mindanao", province),
+         province = ifelse(country == "Philippines" & province %in% Bicol, "Bicol region", province),
+         province = ifelse(country == "Philippines" & province %in% Cagayan, "Cagayan valley", province),
+         province = ifelse(country == "Philippines" & province %in% Caraga, "Caraga region", province),
+         province = ifelse(country == "Philippines" & province %in% Central.luzon, "Central luzon", province),
+         province = ifelse(country == "Philippines" & province %in% Central.visayas, "Central visayas", province),
+         province = ifelse(country == "Philippines" & province %in% Cordillera, "Cordillera administrative region", province),
+         province = ifelse(country == "Philippines" & province %in% Davao, "Davao region", province),
+         province = ifelse(country == "Philippines" & province %in% Eastern.visayas, "Eastern visayas", province),
+         province = ifelse(country == "Philippines" & province %in% Ilocos, "Ilocos region", province),
+         province = ifelse(country == "Philippines" & province %in% National.capital, "National capital region", province),
+         province = ifelse(country == "Philippines" & province %in% Nothern.mindanao, "Northern mindanao", province),
+         province = ifelse(country == "Philippines" & province %in% Soccskargen, "Soccsksargen", province),
+         province = ifelse(country == "Philippines" & province %in% Southern.tagalog.mainland, "Southern tagalog mainland", province),
+         province = ifelse(country == "Philippines" & province %in% Southwestern.tagalog.region, "Southwestern tagalog region", province),
+         province = ifelse(country == "Philippines" & province %in% Western.visayas, "Western visayas", province),
+         province = ifelse(country == "Philippines" & province %in% Zamgoanga.peninsula, "Zamgoanga peninsula", province),
+         province = ifelse(country == "Turkey" & province %in% Istanbul, "Istanbul", province),
+         province = ifelse(country == "Turkey" & province %in% Tekirdag, "Tekirdag", province),
+         province = ifelse(country == "Turkey" & province %in% Balikesir, "Balikesir", province),
+         province = ifelse(country == "Turkey" & province %in% Izmir, "Izmir", province),
+         province = ifelse(country == "Turkey" & province %in% Aydin, "Aydin", province),
+         province = ifelse(country == "Turkey" & province %in% Manisa, "Manisa", province),
+         province = ifelse(country == "Turkey" & province %in% Bursa, "Bursa", province),
+         province = ifelse(country == "Turkey" & province %in% Kocaeli, "Kocaeli", province),
+         province = ifelse(country == "Turkey" & province %in% Ankara, "Ankara", province),
+         province = ifelse(country == "Turkey" & province %in% Konya, "Konya", province),
+         province = ifelse(country == "Turkey" & province %in% Antalya, "Antalya", province),
+         province = ifelse(country == "Turkey" & province %in% Adana, "Adana", province),
+         province = ifelse(country == "Turkey" & province %in% Hatay, "Hatay", province),
+         province = ifelse(country == "Turkey" & province %in% Kirikkale, "Kirikkale", province),
+         province = ifelse(country == "Turkey" & province %in% Kayseri, "Kayseri", province),
+         province = ifelse(country == "Turkey" & province %in% Zonguldak, "Zonguldak", province),
+         province = ifelse(country == "Turkey" & province %in% Kastamonu, "Kastamonu", province),
+         province = ifelse(country == "Turkey" & province %in% Samsun, "Samsun", province),
+         province = ifelse(country == "Turkey" & province %in% Trabzon, "Trabzon", province),
+         province = ifelse(country == "Turkey" & province %in% Erzurum, "Erzurum", province),
+         province = ifelse(country == "Turkey" & province %in% Agri, "Agri", province),
+         province = ifelse(country == "Turkey" & province %in% Malatya, "Malatya", province),
+         province = ifelse(country == "Turkey" & province %in% Van, "Van", province),
+         province = ifelse(country == "Turkey" & province %in% Gaziantep, "Gaziantep", province),
+         province = ifelse(country == "Turkey" & province %in% Sanliurfa, "Sanliurfa", province),
+         province = ifelse(country == "Turkey" & province %in% Mardin, "Mardin", province)) %>% 
+  left_join(base.provinces, by = c("country", "province")) %>% 
+  mutate(basecount = ifelse(is.na(basecount), 0, basecount))
+
+
+
+
+```
+
+## Country-level data
+
+```{r Country Level Variables}
+
+
+# First reading in CPI data for all urban consumers and converting 2011 to base year to match PWT data.
+cpi <- tq_get("CPIAUCSL", 
+              get = "economic.data",
+              from = "2010-01-01",
+              to = "2019-01-01") %>% 
+  mutate(year = format(date, "%Y")) %>% 
+  group_by(year) %>% 
+  dplyr::summarise(cpi = mean(price)) %>% 
+  mutate(basevalue = cpi[year==2011], # Set new base year value of 2011 to put GDP values on same scale
+         cpi = cpi/basevalue,
+         year = as.numeric(year)) %>% 
+  filter(year == 2018)
+
+
+# WARNING!!! for whatever reason the pivot function sometimes doesn't work on every other pass. 
+# Make sure this is in long form
+
+# Also, LOTS of stupid names match the Netherlands country codes. Filter those out.
+netherlandsfilter <- c("Curaçao, Kingdom of the Netherlands", "Sint Maarten, Kingdom of the Netherlands", "Aruba, Kingdom of the Netherlands")
+
+`%notin%` <- Negate(`%in%`) # create this to get rid of lots of duplicate Netherlands values. Appear as a result of protectorates or territories. 
+
+imf.exp <- readxl::read_xlsx(here("Raw Data/Exports_and_Imports_by_Areas_and_Co.xlsx"), sheet = 1, skip = 5)
+imf.imp <- readxl::read_xlsx(here("Raw Data/Exports_and_Imports_by_Areas_and_Co.xlsx"), sheet = 2, skip = 5)
+
+
+imf.exp.long <- imf.exp %>% 
+  dplyr::rename("country" = 1) %>% 
+  mutate(ccode = countrycode::countrycode(country, "country.name", "cown")) %>% 
+  filter(ccode %in% ccode.list) %>% 
+  slice(-c(14:16)) %>% 
+  pivot_longer(cols = 2:4,
+               values_to = "us_exports_to_partner",
+               names_to = "year") %>% 
+  mutate(year = as.numeric(year) + 1)
+
+
+
+imf.imp.long <- imf.imp %>% 
+  dplyr::rename(country = 1) %>% 
+  mutate(ccode = countrycode::countrycode(country, "country.name", "cown")) %>% 
+  filter(ccode %in% ccode.list) %>% 
+  slice(-c(14:16)) %>% 
+  pivot_longer(cols = 2:4,
+               values_to = "us_imports_from_partner",
+               names_to = "year") %>% 
+  mutate(year = as.numeric(year) + 1)
+
+
+# Merge IMF Trade data and condense to average quarterly values
+imf.combined <- imf.exp.long %>% 
+  left_join(imf.imp.long) 
+
+
+
+  
+# IMF DOTS Exports to counterpart countries from US
+#exports.data <- readxl::read_xlsx(here::here("Raw Data", "Exports_to_Counterpart_Countries.xlsx"), skip = 5)
+#
+#exports.data <- exports.data %>% 
+#  dplyr::rename("country" = 1) %>% 
+#  pivot_longer(cols = 2:ncol(exports.data),
+#               values_to = "exports",
+#               names_to = "year") %>% 
+#  filter(country %notin% netherlandsfilter) %>% 
+#  mutate(ccode = countrycode(country, "country.name", "cown"),
+#         ccode = ifelse(country == "Eastern Germany", 265, ccode),
+#         ccode = ifelse(country == "China, P.R.", 710, ccode),
+#         ccode = ifelse(country == "Central African Rep.", 482, ccode),
+#         year = as.numeric(year)) %>% 
+#  filter(year >= 2018) %>% 
+#  left_join(cpi, by = "year") %>% 
+#  mutate(exports = exports/cpi) %>% 
+#  dplyr::rename("exports_from_us" = "exports") %>% 
+#  dplyr::select("ccode", "year", "exports_from_us") 
+
+
+
+# IMF DOTS Imports from counterpart countries into US
+#imports.data <- readxl::read_xlsx(here("Raw Data", "Imports_from_Counterpart_Countries.xlsx"), skip = 5) 
+#
+#imports.data <- imports.data %>% 
+#  dplyr::rename("country" = 1) %>% 
+#  pivot_longer(cols = 2:ncol(imports.data),
+#               values_to = "imports",
+#               names_to = "year") %>% 
+#  filter(country %notin% netherlandsfilter) %>% 
+#  mutate(ccode = countrycode(country, "country.name", "cown"),
+#         ccode = ifelse(country == "Eastern Germany", 265, ccode),
+#         ccode = ifelse(country == "China, P.R.", 710, ccode),
+#         ccode = ifelse(country == "Central African Rep.", 482, ccode),
+#         year = as.numeric(year)) %>% 
+#  filter(year >= 2018) %>% 
+#  left_join(cpi, by = "year") %>% 
+#  mutate(imports = imports/cpi) %>% 
+#  dplyr::rename("imports_to_us" = "imports") %>% 
+#  dplyr::select("ccode", "year", "imports_to_us")
+#
+## Combine trade data
+#imf.combined <- exports.data %>% 
+#  full_join(imports.data, by = c("ccode", "year")) %>% 
+#  filter(ccode %in% ccode.list)
+
+
+
+# V-Dem Data
+vdem.data <- read_csv(here::here("Raw Data", "V-Dem-CY-Core-v10.csv")) %>% 
+  dplyr::select("country_name", "year", "v2x_polyarchy", "v2x_libdem", "COWcode") %>% 
+  filter(year >= 2017) %>% 
+  dplyr::rename("ccode" = "COWcode") %>% 
+  mutate(ccode = ifelse(ccode == 260, 255, ccode)) %>% 
+  filter(ccode %in% ccode.list) %>% 
+  mutate(year = year + 1)
+
+
+
+# Penn world tables data
+# Includes total population, real gdp per capita 2011 USD, and human capital index
+# Note that PWT data don't include South Vietnam (CCODE 817) which screws up troop levels since 
+# Highest troop values are in South Vietnam in 1960s. This screws up spatial troop values, too.
+# Uses national accounts for gdp values
+pwt.data <- readxl::read_xlsx(here("Raw Data", "pwt91.xlsx"), sheet = 3) %>%
+  mutate(ccode = countrycode(country, "country.name", "cown")) %>% 
+  dplyr::select("ccode", "year", "pop", "rgdpna") %>% 
+  mutate(rgdpna = rgdpna * 1000000) %>% # Match scaling
+  dplyr::rename("realgdp_merge" = "rgdpna") %>% 
+  filter(year >= 2017) %>% 
+  filter(ccode %in% ccode.list) %>% 
+  mutate(year = year + 1)
+
+
+
+# World Bank Population and GDP data
+wdi.data <- wbstats::wb(country = "countries_only",
+                     indicator = c("pop" = "SP.POP.TOTL", "gdp" = "NY.GDP.MKTP.KD"),
+                     startdate = 2017,
+                     enddate = 2020) 
+
+wdi.data <- wdi.data %>% 
+  pivot_wider(id_cols = c(country, date),
+              names_from = indicator) %>% 
+  mutate(ccode = countrycode(country, "country.name", "cown")) %>%
+  dplyr::rename("pop" = 3, "gdp" = 4, "year" = "date") %>% 
+  filter(ccode %in% ccode.list) %>% 
+  mutate(year = as.numeric(year) + 1) %>% 
+  filter(year < 2021)
+  
+
+# Troops 2018 (includes active duty only)
+troop.data.2018 <- readxl::read_xlsx(here("Raw Data", "DMDC_Website_Location_Report_1809.xlsx"), skip = 60) %>% 
+  slice(1:162) %>% 
+  mutate(UNKNOWN = ifelse(is.na(UNKNOWN), "UNITED STATES", UNKNOWN),
+         ccode = countrycode(UNKNOWN, "country.name", "cown")) %>% 
+  mutate(ccode = ifelse(grepl(".*SERBIA.*", UNKNOWN), 345, ccode)) %>% 
+  filter(!is.na(ccode)) %>% 
+  dplyr::rename("troops" = 8) %>% 
+  mutate(year = 2018) %>% 
+  dplyr::select(ccode, troops, year) %>% 
+  arrange(ccode) %>% 
+  filter(ccode %in% ccode.list)
+
+# Troops 2019 (includes active duty only)
+troop.data.2019 <- readxl::read_xlsx(here("Raw Data", "DMDC_Website_Location_Report_1909.xlsx"), skip = 60) %>% 
+  slice(1:176) %>% 
+  dplyr::rename("country" = `ZZ-UNKNOWN`) %>% 
+  mutate(country = ifelse(is.na(country), "UNITED STATES", country),
+         ccode = countrycode(country, "country.name", "cown")) %>% 
+  mutate(ccode = ifelse(grepl(".*SERBIA.*", country), 345, ccode)) %>% 
+  filter(!is.na(ccode)) %>% 
+  dplyr::rename("troops" = 8) %>% 
+  mutate(year = 2019) %>% 
+  dplyr::select(ccode, troops, year) %>% 
+  arrange(ccode) %>% 
+  filter(ccode %in% ccode.list)
+
+# Troops 2018 (includes active duty only)
+troop.data.2020 <- readxl::read_xlsx(here("Raw Data", "DMDC_Website_Location_Report_2009.xlsx"), skip = 60) %>% 
+  slice(1:176) %>% 
+  dplyr::rename("country" = `UNKNOWN`) %>% 
+  mutate(country = ifelse(is.na(country), "UNITED STATES", country),
+         ccode = countrycode(country, "country.name", "cown")) %>% 
+  mutate(ccode = ifelse(grepl(".*SERBIA.*", country), 345, ccode)) %>% 
+  filter(!is.na(ccode)) %>% 
+  dplyr::rename("troops" = 8) %>% 
+  mutate(year = 2020) %>% 
+  dplyr::select(ccode, troops, year) %>% 
+  arrange(ccode) %>% 
+  filter(ccode %in% ccode.list)
+
+troops.com <- bind_rows(troop.data.2018, troop.data.2019, troop.data.2020)
+
+
+
+# Merge everything together and generate appropriate measures
+o.data <- base.data %>% 
+  mutate(ed = ifelse(ed > 25, NA, ed),
+    self_sufficient = factor(self_sufficient, ordered = FALSE, levels = c("Don't know/decline to answer", "Strongly disagree", "Somewhat disagree", "Neither agree nor disagree", "Somewhat agree", "Strongly agree")),
+         party_dems = factor(party_dems, ordered = FALSE, levels = c("Don't know/decline to answer", "Very negative", "Somewhat negative", "Neutral", "Somewhat positive", "Very positive")),
+         party_reps = factor(party_reps, ordered = FALSE, levels = c("Don't know/decline to answer", "Very negative", "Somewhat negative", "Neutral", "Somewhat positive", "Very positive")),
+         troops_econ_nat = factor(troops_econ_nat, ordered = FALSE, levels = c("Don't know/decline to answer", "Very negative", "Negative", "Neither Positive nor negative", "Positive", "Very positive")),
+         troops_econ_local = factor(troops_econ_local, ordered = FALSE, levels = c("Don't know/decline to answer", "Very negative", "Negative", "Neither Positive nor negative", "Positive", "Very positive")),
+         troops_crime_pers = factor(troops_crime_pers, ordered = FALSE, levels = c("Don't know/Decline to answer", "No", "Yes")),
+         troops_1 = factor(troops_1, ordered = FALSE, levels = c("Don't know/decline to answer", "Very unfavorable", "Somewhat unfavorable", "Neutral", "Somewhat favorable", "Very favorable")),
+         troops_1_ord = droplevels(troops_1, exclude = c("Don't know/decline to answer")),
+         troops_1_ord = factor(troops_1, ordered = TRUE, levels = c("Very unfavorable", "Somewhat unfavorable", "Neutral", "Somewhat favorable", "Very favorable")),
+         cooperate = factor(cooperate, levels = c("Don't know/Decline to answer", "Not important", "Neutral", "Somewhat Important", "Very Important")),
+         american_people = factor(american_people, ordered = FALSE, levels = c("Don't know/decline to answer", "Very unfavorable", "Somewhat unfavorable", "Neutral", "Somewhat favorable", "Very favorable")),
+         american_people_ord = droplevels(american_people, exclude = c("Don't know/decline to answer")),
+         american_people_ord = factor(american_people, ordered = TRUE, levels = c("Very unfavorable", "Somewhat unfavorable", "Neutral", "Somewhat favorable", "Very favorable")),
+         american_gov = factor(american_gov, ordered = FALSE, levels = c("Don't know/decline to answer", "Very unfavorable", "Somewhat unfavorable", "Neutral", "Somewhat favorable", "Very favorable")),
+         american_gov_ord = droplevels(american_gov, exclude = c("Don't know/decline to answer")),
+         american_gov_ord = factor(american_gov, ordered = TRUE, levels = c("Very unfavorable", "Somewhat unfavorable", "Neutral", "Somewhat favorable", "Very favorable")),
+         income = factor(income, ordered = FALSE, levels = c("0%-16%", "17%-34%", "35%-50%", "51%-67%", "65%-83%", "84%-100%"), exclude = NA),
+         gender = factor(gender, ordered = FALSE, levels = c("Female", "Male", "Non-binary", "None of the above")),
+         gender = relevel(gender, ref = "Male"),
+         minority = factor(minority, ordered = FALSE, levels = c("Decline to answer", "No", "Yes")),
+         minority = relevel(minority, ref = "No"),
+         protest = factor(protest, ordered = FALSE, levels = c("Don't know/Decline to answer", "Never", "One time", "Two times", "Three times", "More than three times")),
+         contact_pers = factor(contact_pers, ordered = FALSE, levels = c("Don't know/decline to answer", "No", "Yes")),
+         contact_pers = relevel(contact_pers, ref = "No"),
+         contact_nonpers = factor(contact_nonpers, ordered = FALSE, levels = c("Don't know/decline to answer", "No", "Yes")),
+         contact_nonpers = relevel(contact_nonpers, ref = "No"),
+         benefit_pers = factor(benefit_pers, ordered = FALSE, levels = c("Don't know/decline to answer", "No", "Yes")),
+         benefit_pers = relevel(benefit_pers, ref = "No"),
+         benefit_nonpers = factor(benefit_nonpers, ordered = FALSE, levels = c("Don't know/decline to answer", "No", "Yes")),
+         benefit_nonpers = relevel(benefit_nonpers, ref = "No"),
+         american_inf_1 = factor(american_inf_1, ordered = FALSE, levels = c("Don't know/decline to answer", "None", "A little", "Some", "A lot")),
+         american_inf_1 = relevel(american_inf_1, ref = "None"),
+         american_inf_2 = factor(american_inf_2, ordered = FALSE, levels = c("Don't know/decline to answer", "Very negative", "Negative", "Neither positive nor negative", "Positive", "Very positive")),
+         american_inf_2 = relevel(american_inf_2, ref = "Neither positive nor negative"),
+         troops_security = factor(troops_security, levels = c("Don't know/decline to answer", "Very unhelpful", "Somewhat unhelpful", "Neutral", "Somewhat helpful", "Very helpful")),
+         econnat_dummy = ifelse(troops_econ_nat == "Positive" | troops_econ_nat == "Very positive", 1, 0),
+         econloc_dummy = ifelse(troops_econ_local == "Positive" | troops_econ_local == "Very positive", 1, 0),
+         american_p_dummy = ifelse(american_people == "Somewhat favorable" | american_people == "Very favorable", 1, 0),
+         american_g_dummy = ifelse(american_gov == "Somewhat favorable" | american_gov == "Very favorable", 1, 0),
+         american_t_dummy = ifelse(troops_1 == "Somewhat favorable" | troops_1 == "Very favorable", 1, 0),
+         troops_1_cat = fct_collapse(troops_1,
+                                     dk = "Don't know/decline to answer",
+                                     neutral = "Neutral",
+                                     neg = c("Very unfavorable", "Somewhat unfavorable"),
+                                     pos = c("Somewhat favorable", "Very favorable")),
+         american_p_cat = fct_collapse(american_people,
+                                       dk = "Don't know/decline to answer",
+                                       neutral = "Neutral",
+                                       neg = c("Very unfavorable", "Somewhat unfavorable"),
+                                       pos = c("Somewhat favorable", "Very favorable")),
+         american_g_cat = fct_collapse(american_gov,
+                                       dk = "Don't know/decline to answer",
+                                       neutral = "Neutral",
+                                       neg = c("Very unfavorable", "Somewhat unfavorable"),
+                                       pos = c("Somewhat favorable", "Very favorable")),
+         country = factor(country, exclude = NA),
+         ccode = countrycode(country, "country.name", "cown")) %>% 
+  left_join(vdem.data, by = c("ccode", "year")) %>% 
+  left_join(wdi.data, by = c("ccode", "year")) %>% 
+  left_join(troops.com, by = c("ccode", "year")) %>% 
+  left_join(imf.combined, by = c("ccode", "year")) %>%  
+  group_by(country) %>% 
+  mutate_at(vars("ideology", "ed"),
+            list(c_mean = ~mean(., na.rm = TRUE),
+                 c_demeaned = ~(.) - mean(., na.rm = TRUE))) %>% 
+  ungroup() %>% 
+  mutate_at(vars("v2x_polyarchy", "v2x_libdem", "ideology_c_mean", "ideology_c_demeaned", "ed", "ideology", "ed_c_mean", "ed_c_demeaned", "pop", "gdp", "troops", "basecount"),
+            list(z = ~arm::rescale(.))) %>% 
+  mutate(troops_log = log(troops),
+         troops_norm = (troops / max(troops, na.rm = TRUE)),
+         pop_log = log(pop),
+         gdp_log = log(gdp),
+         exports_log = log(us_imports_from_partner),
+         imports_log = log(us_imports_from_partner),
+         basedummy = factor(ifelse(basecount > 0, "Yes", "No")),
+         log_basecount = log1p(basecount),
+         protest_dummy = ifelse(protest == "Never", 0,
+                                ifelse(protest == "Don't know/Decline to answer", NA, 1)),
+         protest_dummy = factor(protest_dummy, levels = c(0, 1), labels = c("No", "Yes")),
+         country = ifelse(country == "Poland, Rep. of", "Poland", country),
+           country = ifelse(country == "Korea, Rep. of", "South Korea", country),
+           country = ifelse(country == "Netherlands, The", "Netherlands", country),) %>% 
+  ungroup()
+
+
+
+save(o.data, file = here("../Book/Data/General/opinion.data.RData"))
+
+
+```

@@ -1,0 +1,236 @@
+---
+output: pdf_document
+---
+
+
+```{r setup}
+library(tidyverse)
+library(brms)
+library(glue)
+library(ggtext)
+
+theme_flynn <- theme_linedraw() + theme(text = element_text(size = 11),
+                                        plot.title = element_markdown(face = "bold", size = 14),
+                                        plot.subtitle = element_markdown(face = "italic", size = 12, color = "gray40"),
+                                        plot.caption = element_text(face = "italic", size = 8),
+                                        strip.background = element_rect(fill = "gray80", color = "black"),
+                                        strip.text = element_text(color = "black", face = "bold"),
+                                        panel.grid.major = element_line(color = "gray70", size = 0.15),
+                                        panel.grid.minor = element_line(color = "gray90", size = 0.1))
+
+```
+
+# Gaussian Models
+
+```{r gaussian}
+
+
+
+ITER = 5000
+WARMUP = 2500
+CHAINS = 4
+CORES = 4
+SEED = 66502
+
+PRIOR = set_prior("normal(0,2)", class = "b")
+
+
+tic()
+m.numerator.gaussian <- brm(log_troops_z ~ log_troops_lag_z + log_troops_cumsum_z + (1 | ccode),
+                   data = p.data,
+                   prior = PRIOR,
+                   family = gaussian(),
+                   iter = ITER,
+                   warmup = WARMUP,
+                   chains = CHAINS,
+                   cores = CORES,
+                   seed = SEED,
+                   control = list(adapt_delta = 0.80,
+                                          max_treedepth = 13),
+                   backend = "cmdstanr")
+
+toc()
+
+num.check <- brms::pp_check(m.numerator.gaussian)
+
+num.check 
+
+# Adjustment set
+# { Alignment[t], Ally[t], GDP[t], Growth[t-1], Population[t], ProtestEnvironment[t-1], Protest[t-1], Rebellion[t-1], Regime[t], Troops[t-1], USWar[t] }
+
+m.denominator.gaussian <-  brm(log_troops_z ~ log_troops_lag_z + log_troops_cumsum_z + idealdistance_2_z + us_ally + gdp_z + gdp_growth_z + pop_z + log(protest_other+1) + anti_us_protest_lag + lag(conflict_dummy) + v2x_polyarchy_z + us_war + (1 | ccode),
+                   data = p.data,
+                   prior = PRIOR,
+                   family = gaussian(),
+                   iter = ITER,
+                   warmup = WARMUP,
+                   chains = CHAINS,
+                   cores = CORES,
+                   seed = SEED,
+                   control = list(adapt_delta = 0.80,
+                                          max_treedepth = 13),
+                   backend = "cmdstanr")
+
+den.check <- brms::pp_check(m.denominator.gaussian)
+
+den.check 
+
+
+#### Numerator and Denominator 
+
+p.data$numerator.gaussian <- dnorm(x = p.data$log_troops_z, 
+                                      mean = predict(m.numerator.gaussian, newdata = p.data, allow_new_levels = TRUE)[, 1], 
+                                      sd = sd(residuals(m.numerator.gaussian, newdata = p.data, allow_new_levels = TRUE)[, 1], na.rm = TRUE))
+
+p.data$denominator.gaussian <- dnorm(x = p.data$log_troops_z, 
+                                        mean = predict(m.denominator.gaussian, newdata = p.data, allow_new_levels = TRUE)[, 1], 
+                                        sd = sd(residuals(m.denominator.gaussian, newdata = p.data, allow_new_levels = TRUE)[, 1], na.rm = TRUE))
+
+p.data <- p.data %>% 
+  mutate(iptw.gaussian = numerator.gaussian/denominator.gaussian) %>% 
+  group_by(ccode) %>% 
+  mutate(iptw.prod.gaussian = cumprod(replace(iptw.gaussian, is.na(iptw.gaussian), 1)),
+         iptw.10.gaussian = ifelse(iptw.prod.gaussian > 10, 10, iptw.prod.gaussian),
+         iptw.50.gaussian = ifelse(iptw.prod.gaussian > 50, 50, iptw.prod.gaussian),
+         iptw.500.gaussian = ifelse(iptw.prod.gaussian > 500, 500, iptw.prod.gaussian),
+         iptw.1000.gaussian = ifelse(iptw.prod.gaussian > 1000, 1000, iptw.prod.gaussian),
+         iptw.5000.gaussian = ifelse(iptw.prod.gaussian > 5000, 5000, iptw.prod.gaussian),
+         iptw.10000.gaussian = ifelse(iptw.prod.gaussian > 10000, 10000, iptw.prod.gaussian))
+
+
+```
+
+
+# Hurdle Lognormal
+
+```{r hurdle lognormal}
+
+#### Defining hurdle density function
+
+dhlnorm <- function(x, meanlog, sdlog, pval) {
+  
+    if (x > 0) {
+    
+    value <- dlnorm(x, meanlog = meanlog, sdlog = sdlog, log = TRUE) + log(1-pval)
+    
+    return(exp(value))
+    
+  } else {
+    
+    value <- pval
+    
+    return(value)
+  }
+  }
+
+
+
+ITER = 5000
+WARMUP = 2500
+CHAINS = 4
+CORES = 4
+SEED = 66502
+
+PRIOR = set_prior("normal(0,2)", class = "b")
+
+
+tic()
+m.numerator.lognorm <- brm(troops ~ log_troops_lag + log_troops_cumsum_z + (1 | ccode),
+                   hu ~ log_troops_lag + log_troops_cumsum_z + (1 | ccode),
+                   data = p.data,
+                   prior = PRIOR,
+                   family = hurdle_lognormal(),
+                   iter = ITER,
+                   warmup = WARMUP,
+                   chains = CHAINS,
+                   cores = CORES,
+                   seed = SEED,
+                   control = list(adapt_delta = 0.80,
+                                          max_treedepth = 13),
+                   backend = "cmdstanr")
+
+toc()
+
+num.check.lognorm <- brms::pp_check(m.numerator.lognorm)
+
+  num.check.lognorm +
+    scale_x_continuous(trans = "log1p")
+
+# Adjustment set
+# { Alignment[t], Ally[t], GDP[t], Growth[t-1], Population[t], ProtestEnvironment[t-1], Protest[t-1], Rebellion[t-1], Regime[t], Troops[t-1], USWar[t] }
+
+m.denominator.lognorm <-  brm(troops ~ log_troops_lag + log_troops_cumsum_z + idealdistance_2_z + us_ally + gdp_z + gdp_growth_z + pop_z + log(protest_other+1) + anti_us_protest_lag + lag(conflict_dummy) + v2x_polyarchy_z + us_war + (1 | ccode),
+                      hu ~ log_troops_lag + log_troops_cumsum_z + idealdistance_2_z + us_ally + gdp_z + gdp_growth_z + pop_z + log(protest_other+1) + anti_us_protest_lag + lag(conflict_dummy) + v2x_polyarchy_z + us_war + (1 | ccode),
+                   data = p.data,
+                   prior = PRIOR,
+                   family = hurdle_lognormal(),
+                   iter = ITER,
+                   warmup = WARMUP,
+                   chains = CHAINS,
+                   cores = CORES,
+                   seed = SEED,
+                   control = list(adapt_delta = 0.80,
+                                          max_treedepth = 13),
+                   backend = "cmdstanr")
+
+
+
+den.check.lognorm <- brms::pp_check(m.denominator.lognorm)
+
+den.check.lognorm + 
+  scale_x_continuous(trans = "log1p")
+
+
+#### Numerator and Denominator 
+
+p.data$numerator.lognorm <- dhlnorm(x = log1p(p.data$troops), 
+                            meanlog = predict(m.numerator.lognorm, newdata = p.data, allow_new_levels = TRUE)[, 1], 
+                            sdlog = sd(residuals(m.numerator.lognorm, newdata = p.data, allow_new_levels = TRUE)[, 1], na.rm = TRUE),
+                            pval = 0.2120)
+
+p.data$denominator.lognorm <- dhlnorm(x = log1p(p.data$troops),
+                              meanlog = predict(m.denominator.lognorm, newdata = p.data, allow_new_levels = TRUE)[, 1], 
+                              sdlog = sd(residuals(m.denominator.lognorm, newdata = p.data, allow_new_levels = TRUE)[, 1], na.rm = TRUE),
+                              pval = 0.2120)
+
+p.data <- p.data %>% 
+  mutate(iptw.lognorm = numerator.lognorm/denominator.lognorm) %>% 
+  group_by(ccode) %>% 
+  mutate(iptw.prod.lognorm = cumprod(replace(iptw.lognorm, is.na(iptw.lognorm), 1)),
+         iptw.10.lognorm = ifelse(iptw.prod.lognorm > 10, 10, iptw.prod.lognorm),
+         iptw.50.lognorm = ifelse(iptw.prod.lognorm > 50, 50, iptw.prod.lognorm),
+         iptw.500.lognorm = ifelse(iptw.prod.lognorm > 500, 500, iptw.prod.lognorm),
+         iptw.1000.lognorm = ifelse(iptw.prod.lognorm > 1000, 1000, iptw.prod.lognorm),
+         iptw.5000.lognorm = ifelse(iptw.prod.lognorm > 5000, 5000, iptw.prod.lognorm),
+         iptw.10000.lognorm = ifelse(iptw.prod.lognorm > 10000, 10000, iptw.prod.lognorm))
+
+```
+
+
+
+```{r figure comparison}
+
+ggplot() +
+  geom_histogram(data = p.data %>% filter(iptw.lognorm <= 2), aes(x = iptw.lognorm), bins = 100, color = "black", fill = "blue", alpha = 0.5) +
+  geom_histogram(data = p.data %>% filter(iptw.gaussian <= 2), aes(x = iptw.gaussian), bins = 100, color = "black", fill = "red", alpha = 0.5) +
+  theme_flynn +
+  labs(x = "IPTW Score",
+       y = "Observations",
+       title =  "Comparison of <span style='color: #0000FF'>**Hurdle Lognormal**</span> and <span style='color: #FF0000'>Gaussian</span> weighting models",
+       subtitle = "IPTW Scores")
+         
+    
+ggplot() +
+  geom_histogram(data = p.data %>% filter(iptw.prod.lognorm <= 2), aes(x = iptw.prod.lognorm), bins = 100, color = "black", fill = "blue", alpha = 0.5) +
+  geom_histogram(data = p.data %>% filter(iptw.prod.gaussian <= 2), aes(x = iptw.prod.gaussian), bins = 100, color = "black", fill = "red", alpha = 0.5) +
+  theme_flynn +
+  labs(x = "IPTW Score",
+       y = "Observations",
+       title =  "Comparison of <span style='color: #0000FF'>**Hurdle Lognormal**</span> and <span style='color: #FF0000'>Gaussian</span> weighting models",
+       subtitle = "Cumulative Product of IPTW Scores")
+         
+         
+         
+         
+
+```

@@ -1,0 +1,707 @@
+---
+title: "chapter-protest-assembly"
+author: "Michael Flynn"
+date: "3/7/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Front Matter
+
+This section loads the data files and libraries. Assembles the main data.
+
+## Notes:
+
+1. I parsed out the imports and exports initial lines because the subsequent code chunks act super weird. 
+
+2. I rewrote almost all of this on May 8, 2020 after similarly reworking the code from the Republican foreign policy book project. The main changes were:
+    - Replacing the GDP data with Gleditsch's expanded trade and GDP data up through 2011.
+    - Using Penn World Tables data from 2012-2018
+    - Replacing trade data with COW trade data up through 2012
+    - Using IMF trade data for 2013-2018
+    - I also updated the troops data to include troops located in the continental United States. This affects Russia and Canada's spatial measures of troops.
+    
+    
+# Code frontmatter
+
+```{r setup , include = FALSE, ecno = FALSE}
+library(tidyverse)
+library(here)
+library(cshapes)
+library(countrycode)
+library(arm)
+library(tidyquant)
+library(readxl)
+library(psych)
+
+
+
+```
+
+
+
+# Read and clean data
+
+```{r data assembly, echo = FALSE, warning=FALSE}
+
+# Read and clean data
+
+#Please note that the PRIO armed conflict data is available from this website: https://ucdp.uu.se/downloads/
+  
+# Read and clean data
+# US protest events only
+event.list <- c("Protest altruism", "Protest defacement", "Protest demonstrations", "Protest obstruction", "Protest procession", "Strikes and boycotts", "Threaten to boycott or embargo")
+
+protest.us <- readxl::read_xlsx(here::here("Raw Data", "_Revised Extractions and Events.xlsx"), sheet = 2) %>%  
+  filter(`Protest Event` %in% event.list) %>% 
+  mutate(miltarget = if_else(TgtSector == "<MILI>", 1, 0),
+         ustarget = if_else(TgtCountry == "USA", 1, 0),
+         antiusmil = if_else(miltarget == 1 & ustarget == 1, 1, 0),
+         year = format(as.Date(EventDate, format = "%Y-%m-%d"), "%Y"),
+         month = format(as.Date(EventDate, format = "%Y-%m-%d"), "%b")) %>% 
+  mutate(ccode = countrycode(Location, "country.name", "cown")) %>% 
+  group_by(ccode, year, month, ID) %>% 
+  mutate(duplicates = seq()) %>% 
+  group_by(ccode, year) %>% 
+  summarise(anti_us_protest = sum(ustarget, na.rm = TRUE),
+            anti_us_mil = sum(antiusmil, na.rm = TRUE)) %>% 
+  mutate(year = as.numeric(year))
+
+
+# All protest events (denominator)
+protest.base <- readxl::read_xlsx(here("Raw Data", "Foreign Protest Monthly Counts.xlsx")) %>% 
+  filter(Event %in% event.list) %>% 
+  mutate(ccode = countrycode(Country, "country.name", "cown")) %>%
+  group_by(ccode, Year) %>% 
+  summarise(protest_count = sum(Count, na.rm = TRUE)) %>%
+  rename("year" = "Year") %>% 
+  filter(!is.na(ccode))
+
+
+# Country-year list
+cyear.base <- read_csv(here("Raw Data", "system2016 (2).csv")) %>%
+  filter(year >= 1988) %>% 
+  dplyr::select(ccode, year)
+
+
+# Protest combined 
+protest.combined <- cyear.base %>% 
+  left_join(protest.base, by = c("ccode", "year")) %>% 
+  left_join(protest.us, by = c("ccode", "year")) %>% 
+  mutate(protest_count = if_else(is.na(protest_count), 0, protest_count),
+         anti_us_protest = if_else(is.na(anti_us_protest), 0, anti_us_protest),
+         anti_us_mil = if_else(is.na(anti_us_mil), 0, anti_us_mil),
+         protest_other = (protest_count - anti_us_protest - anti_us_mil),
+         protest_other = ifelse(protest_other < 0, 0, protest_other),
+         country = countrycode(ccode, "cown", "country.name"))
+
+
+# Protest data frame for spatial var
+protest.sp <- protest.combined %>% 
+  rename("ccode2" = "ccode")
+
+
+# Use the countrycode base dataframe. Reconciled so each unit appears once per country year.
+panelcodes <- countrycode::codelist_panel
+
+
+# Penn world tables data
+# Includes total population, real gdp per capita 2011 USD, and human capital index
+# Note that PWT data don't include South Vietnam (CCODE 817) which screws up troop levels since 
+# Highest troop values are in South Vietnam in 1960s. This screws up spatial troop values, too.
+# Uses national accounts for gdp values
+pwt.data <- readxl::read_xlsx(here("Raw Data", "pwt91.xlsx"), sheet = 3) %>%
+  mutate(ccode = countrycode(country, "country.name", "cown")) %>% 
+  dplyr::select("ccode", "year", "pop", "rgdpna") %>% 
+  mutate(rgdpna = rgdpna * 1000000) %>% # Match scaling
+  rename("realgdp_merge" = "rgdpna") %>% 
+  filter(year > 2011)
+
+
+# Gleditsch Expanded Trade and GDP v6.0
+# Real GDP in 2005 Dollars
+# First reading in CPI data for all urban consumers and converting 2011 to base year to match PWT data.
+cpi <- tq_get("CPIAUCSL", 
+              get = "economic.data",
+              from = "1950-01-01",
+              to = "2019-01-01") %>% 
+  mutate(year = format(date, "%Y")) %>% 
+  group_by(year) %>% 
+  summarise(cpi = mean(price)) %>% 
+  mutate(basevalue = cpi[year==2011], # Set new base year value of 2011 to put GDP values on same scale
+         cpi = cpi/basevalue,
+         year = as.numeric(year))
+
+
+gled.data <- read_delim(here("Raw Data/expgdpv6.0", "gdpv6.txt"), delim = "\t") %>% 
+  rename("ccode" = "statenum") %>% 
+  left_join(cpi, by = "year") %>% 
+  mutate(realgdp_merge = ((pop*1000)*cgdppc)/cpi,
+         pop = pop/1000)
+
+
+# Final data frame containing merge PWT and Gleditsch data
+gdp.data <- gled.data %>% 
+  bind_rows(pwt.data) %>% 
+  arrange(ccode, year) %>% 
+  select("ccode", "year", "pop", "realgdp_merge") %>% 
+  rename("gdp" = "realgdp_merge")
+
+
+# V-Dem Data
+vdem.data <- read_csv(here::here("Raw Data/Country_Year_V-Dem_Core_CSV_v9", "V-Dem-CY-Core-v9.csv")) %>% 
+  select("country_name", "year", "v2x_polyarchy", "v2x_libdem", "COWcode") %>% 
+  filter(year >= 1950) %>% 
+  rename("ccode" = "COWcode") %>% 
+  mutate(ccode = ifelse(ccode == 260, 255, ccode))
+
+
+# Start with COW Trade Data
+
+trade.cow.data <- read_csv(here("Raw Data", "Dyadic_COW_4.0.csv")) %>% 
+  filter(year >= 1950 & ccode1 == 2) %>% 
+  rename("imports_to_us" = "flow1",
+         "exports_from_us" = "flow2") %>% 
+  left_join(cpi, by = "year") %>% 
+  mutate(imports_to_us = (imports_to_us)/cpi,
+         exports_from_us = (exports_from_us)/cpi) %>% 
+  select("ccode2","year", "imports_to_us", "exports_from_us") %>% 
+  rename("ccode" = "ccode2")
+  
+
+
+
+# WARNING!!! for whatever reason the pivot function sometimes doesn't work on every other pass. 
+# Make sure this is in long form
+
+# Also, LOTS of stupid names match the Netherlands country codes. Filter those out.
+netherlandsfilter <- c("Curaçao, Kingdom of the Netherlands", "Sint Maarten, Kingdom of the Netherlands", "Aruba, Kingdom of the Netherlands")
+
+`%notin%` <- Negate(`%in%`) # create this to get rid of lots of duplicate Netherlands values. Appear as a result of protectorates or territories. 
+
+# IMF DOTS Exports to counterpart countries from US
+exports.data <- read_xlsx(here::here("Raw Data", "Exports_to_Counterpart_Countries.xlsx"), skip = 5)
+
+exports.data <- exports.data %>% 
+  rename("country" = 1) %>% 
+  pivot_longer(cols = 2:ncol(exports.data),
+               values_to = "exports",
+               names_to = "year") %>% 
+  filter(country %notin% netherlandsfilter) %>% 
+  mutate(ccode = countrycode(country, "country.name", "cown"),
+         ccode = ifelse(country == "Eastern Germany", 265, ccode),
+         ccode = ifelse(country == "China, P.R.", 710, ccode),
+         ccode = ifelse(country == "Central African Rep.", 482, ccode),
+         year = as.numeric(year)) %>% 
+  filter(year > 2014) %>% 
+  left_join(cpi, by = "year") %>% 
+  mutate(exports = exports/cpi) %>% 
+  rename("exports_from_us" = "exports") %>% 
+  select("ccode", "year", "exports_from_us")
+
+
+# IMF DOTS Imports from counterpart countries into US
+imports.data <- readxl::read_xlsx(here("Raw Data", "Imports_from_Counterpart_Countries.xlsx"), skip = 5) 
+
+imports.data <- imports.data %>% 
+  rename("country" = 1) %>% 
+  pivot_longer(cols = 2:ncol(imports.data),
+               values_to = "imports",
+               names_to = "year") %>% 
+  filter(country %notin% netherlandsfilter) %>% 
+  mutate(ccode = countrycode(country, "country.name", "cown"),
+         ccode = ifelse(country == "Eastern Germany", 265, ccode),
+         ccode = ifelse(country == "China, P.R.", 710, ccode),
+         ccode = ifelse(country == "Central African Rep.", 482, ccode),
+         year = as.numeric(year)) %>% 
+  filter(year > 2014) %>% 
+  left_join(cpi, by = "year") %>% 
+  mutate(imports = imports/cpi) %>% 
+  rename("imports_to_us" = "imports") %>% 
+  select("ccode", "year", "imports_to_us")
+
+imf.combined <- exports.data %>% 
+  full_join(imports.data, by = c("ccode", "year"))
+
+# Combine COW and IMF trade data
+trade.data.final <- trade.cow.data %>% 
+  bind_rows(imf.combined) %>% 
+  arrange(ccode, year)
+
+
+# Create second data frame for spatial analysis
+trade.data.sp <- trade.data.final %>% 
+  rename("ccode2" = "ccode")
+
+
+# Load foreign aid data from US AID Green book
+aid.base <- readxl::read_xlsx(here("Raw Data", "us_foreignaid_greenbook.xlsx"), skip = 6)
+
+# Rename the columns
+names(aid.base) <- c("year", "region", "country", "category", "pubrow", "agency", "account", "aid.current", "aid.constant")
+
+
+# Create county-year tibble
+time <- tibble(ccode2 = 2:999) %>% 
+  mutate(ccode = countrycode(ccode2, "cown", "cown"),
+         year = list(seq(from = 1949, to = 2018))) %>% 
+  filter(!is.na(ccode) & ccode != 2) %>% 
+  select("ccode", "year") %>% 
+  unnest(cols = c(year))
+
+
+# Read in and edit aid data
+aid.data <- aid.base %>% 
+  mutate(year = ifelse(year == 1976.9, year == 1976, year)) %>% 
+  group_by(country, year, category) %>% 
+  summarise(aid.constant = sum(aid.constant, na.rm = TRUE),
+            aid.current = sum(aid.current, na.rm = TRUE)) %>% 
+  dplyr::select(-c(5)) %>% 
+  pivot_wider(names_from = category,
+              values_from = aid.constant) %>% 
+  ungroup() %>% 
+  mutate(ccode = countrycode(country, "country.name", "cown")) %>% 
+  filter(!is.na(ccode)) %>% 
+  full_join(time) %>% 
+  mutate(Economic = ifelse(is.na(Economic), 0, Economic),
+         Military = ifelse(is.na(Military), 0, Military),
+         log_econ = log(Economic + 1),
+         log_mil = log(Military + 1)) %>% 
+  rename("econaid" = "Economic", "milaid" = "Military") %>% 
+  arrange(ccode, year) %>% 
+  mutate(country = countrycode(ccode, "cown", "country.name"))
+
+
+# SIPRI Data
+sipri.data <- read_xlsx(here::here("Raw Data/SIPRI-Milex-data-1949-2019.xlsx"), sheet = 7, skip = 4)
+
+sipri.data <- sipri.data %>% 
+  pivot_longer(cols = c(3:73),
+               names_to = "year",
+               values_to = "defburden") %>%
+  filter(year >= 1988) %>% 
+  mutate(ccode = countrycode(Country, "country.name", "cown")) %>% 
+  mutate(ccode = ifelse(Country == "German DR", 265,
+                        ifelse(Country == "Serbia", 345,
+                               ifelse(Country == "Central African Rep.", 482, ccode)))) %>% 
+  filter(defburden != "xxx" & defburden != ". .") %>% 
+  mutate(defburden = round(as.numeric(defburden), digits = 4)) %>% 
+  select(ccode, year, defburden) %>% 
+  mutate(year = as.numeric(year))
+
+sipri.sp <- sipri.data %>% 
+  rename("ccode2" = "ccode")
+  
+  
+  
+
+
+# PRIO Data
+# https://ucdp.uu.se/downloads/
+prio.data <- read_csv(here("Raw Data/ucdp-prio-acd-191.csv")) %>% 
+  rowwise() %>% 
+  select("conflict_id", "year", "intensity_level", "gwno_loc") %>% 
+  separate(gwno_loc, sep = ",", into = c("ccode1", "ccode2", "ccode3", "ccode4" ,"ccode5", "ccode6")) %>% 
+  pivot_longer(cols = c("ccode1", "ccode2", "ccode3", "ccode4", "ccode5", "ccode6"), 
+               names_to = "countrynum", 
+               values_to = "ccode", 
+               values_drop_na = TRUE,
+               names_repair = "minimal") %>% 
+  mutate(ccode = as.numeric(trimws(ccode, which = "both")),
+         intensity.low = if_else(intensity_level == 1, 1, 0),
+         intensity.high = if_else(intensity_level == 2, 1, 0)) %>% 
+  group_by(ccode, year) %>% # Gleditsch and Ward location country code and year
+  summarise(conflictcount = n_distinct(conflict_id),
+            conflictcount_high = sum(intensity.high, na.rm = TRUE),
+            conflictcount_low = sum(intensity.low, na.rm = TRUE),
+            conflict_dummy = if_else(conflictcount > 0, 1, 0)) %>% 
+  filter(year >= 1950)
+
+
+# PRIO data for spatial analysis
+prio.sp <- prio.data %>% 
+  rename("ccode2" = "ccode")
+  
+
+# US War data using PRIO data
+prio.us <- read_csv(here("Raw Data/ucdp-prio-acd-191.csv")) %>% 
+  rowwise() %>% 
+  mutate(us_war = ifelse(grepl(".*United States.*", side_a), 1, 
+                             ifelse(grepl(".*United States.*", side_a_2nd), 1,
+                                    ifelse(grepl(".*United States", side_b), 1,
+                                           ifelse(grepl(".*United States.*", side_b_2nd), 1, 0))))) %>% 
+  filter(us_war == 1) %>% 
+  select("location", "conflict_id", "year", "intensity_level", "gwno_loc", "us_war") %>% 
+  separate(gwno_loc, sep = ",", into = c("ccode1", "ccode2", "ccode3", "ccode4" ,"ccode5", "ccode6")) %>% 
+  pivot_longer(cols = c("ccode1", "ccode2", "ccode3", "ccode4", "ccode5", "ccode6"), 
+               names_to = "countrynum", 
+               values_to = "ccode", 
+               values_drop_na = FALSE,
+               names_repair = "minimal") %>% 
+  mutate(ccode = as.numeric(trimws(ccode, which = "both"))) %>% 
+  filter(!is.na(ccode) & ccode != 2) %>% 
+  select(year, ccode, us_war) %>% 
+  group_by(ccode, year) %>% 
+  summarise(us_war = max(us_war, na.rm = TRUE)) %>% 
+  filter(year >= 1950)
+
+# Spatial data sets
+prio.us.sp <- prio.us %>% 
+  rename("ccode2" = "ccode")
+
+
+
+# Troop deployment data
+troops.data.combined <- readstata13::read.dta13(here("Raw Data/troops 1950-2020.dta")) %>% 
+  dplyr::select(ccode, year, troops) %>% 
+  arrange(ccode, year) %>% 
+  mutate(ccode = ifelse(ccode == 260, 255, ccode)) %>% 
+  group_by(ccode, year) %>% 
+  summarise(troops = max(troops, na.rm = TRUE)) %>% 
+  group_by(ccode) %>% 
+  mutate(troops = ifelse(is.finite(troops), troops, NA),
+         log_troops = log1p(troops),
+         log_troops = ifelse(is.finite(log_troops), log_troops, NA), # remove NaN and Inf values
+         troops_change = ifelse(!is.na(troops) & !is.na(dplyr::lag(troops)), as.numeric(troops - dplyr::lag(troops)), NA),
+         troops_change = ifelse(is.finite(troops_change), troops_change, NA)) # remove NaN and Inf values
+
+
+# Create second data frame for troops data for spatial weighting
+troops.sp <- troops.data.combined %>% 
+  filter(year >= 1950) %>% 
+  dplyr::select("ccode", "year", "troops") %>% 
+  dplyr::rename("ccode2" = "ccode")
+
+
+# Create spatial weighting framework for troops variable
+# This only goes up to 2016 so we have to hack the last two years and assume everything is the same re distance
+startdate = as.Date("1988-01-01", format = "%Y-%m-%d")
+enddate = as.Date("2016-01-01", format = "%Y-%m-%d")
+datelist <- tibble(date = as.Date(seq(startdate, enddate, by = "1 year"), format = "%y-%m-%d"))
+
+thedate <- startdate
+
+# Wrote a little code here to avoid automatically running the cshapes command if I don't need to.
+if(exists("mindist") != "TRUE") {
+
+  mindist <- list() # Create empty list 
+
+for (i in 1:29) {
+  
+  thedate <- datelist$date[i]
+  mindist[[i]] <- cshapes::distlist(thedate, type = "mindist", tolerance = 0.2, useGW = FALSE)
+  mindist[[i]]$year <- thedate
+
+}  
+
+} else {
+  print("Yay!")
+}
+
+
+# Create minimum distance dataframe to merge troops data
+# Note that the data only go through 2016. Must replicate 2017 and 2018.
+mindist.df.1 <- bind_rows(mindist) %>% 
+  mutate(year = as.numeric(format(year, "%Y")))
+         
+mindist.df.2 <- subset(mindist.df.1, year >= 2015) %>% 
+  mutate(year = year + 2)
+
+
+mindist.df <- bind_rows(mindist.df.1, mindist.df.2) %>% 
+  filter(ccode1 != ccode2) %>% 
+  mutate(ccode1 = ifelse(ccode1 == 260, 255, ccode1),
+         ccode2 = ifelse(ccode2 == 260, 255, ccode2),
+         mindist = ifelse(mindist < 1, 0, mindist), # Note: distlist is returning weird values < 1 & > 0. These all appear to be contiguous.
+         mindist450k = ifelse(mindist == 0, 1, 
+                              ifelse(mindist > 450, NA, mindist))) %>% 
+  left_join(troops.sp, by = c("ccode2", "year")) %>%
+  left_join(prio.sp, by = c("ccode2", "year")) %>% 
+  left_join(prio.us.sp, by = c("ccode2", "year")) %>% 
+  left_join(trade.data.sp, by = c("ccode2", "year")) %>% 
+  left_join(protest.sp, by = c("ccode2", "year")) %>% 
+  left_join(sipri.sp, by = c("ccode2", "year")) %>% 
+  arrange(ccode1, ccode2, year) %>% 
+  mutate(us_war = ifelse(is.na(us_war), 0, us_war),
+         conflictcount = ifelse(is.na(conflictcount), 0, conflictcount),
+         conflictcount_high = ifelse(is.na(conflictcount_high), 0, conflictcount_high),
+         conflictcount_low = ifelse(is.na(conflictcount_low), 0, conflictcount_low),
+         conflict_dummy = ifelse(is.na(conflict_dummy), 0, conflict_dummy),
+         inversedistance = if_else(mindist450k > 0, (1 / mindist450k), 0),
+         troops_w = inversedistance * troops,
+         us_war_w = inversedistance * us_war,
+         conflictcount_w = inversedistance * conflictcount,
+         conflictcount_high_w = inversedistance * conflictcount_high,
+         conflictcount_low_w = inversedistance * conflictcount_low,
+         conflict_dummy_w = inversedistance * conflict_dummy,
+         imports_to_us_w = inversedistance * imports_to_us,
+         exports_from_us_w = inversedistance * exports_from_us,
+         protest_count_w = inversedistance * protest_count,
+         protest_other_w = inversedistance * protest_other,
+         anti_us_protest_w = inversedistance * anti_us_protest,
+         anti_us_mil_w = inversedistance * anti_us_mil,
+         defburden_w = inversedistance * defburden) %>% # Look only at variables within 450k of the referent state
+  arrange(ccode1, ccode2, year) %>% 
+  group_by(ccode1, year) %>% 
+  dplyr::summarise(troops_w_sum = sum(troops_w, na.rm = TRUE),
+                   troops_w_mean = mean(troops_w, na.rm = TRUE),
+                   us_war_w_mean = mean(us_war_w, na.rm = TRUE),
+                   conflictcount_w_mean = mean(conflictcount_w, na.rm = TRUE),
+                   conflictcount_high_w_mean = mean(conflictcount_high_w, na.rm = TRUE),
+                   conflictcount_low_w_mean = mean(conflictcount_low_w, na.rm = TRUE),
+                   conflict_dummy_w_mean = mean(conflict_dummy_w, na.rm = TRUE),
+                   imports_to_us_w_mean = mean(imports_to_us_w, na.rm = TRUE),
+                   exports_from_us_w_mean = mean(exports_from_us_w, na.rm = TRUE),
+                   protest_count_w_mean = mean(protest_count_w, na.rm = TRUE),
+                   protest_other_w_mean = mean(protest_other_w, na.rm = TRUE),
+                   anti_us_protest_w_mean = mean(anti_us_protest_w, na.rm = TRUE),
+                   anti_us_mil_w_mean = mean(anti_us_mil_w, na.rm = TRUE),
+                   defburden_w_mean = mean(defburden_w, na.rm = TRUE)) %>% 
+  mutate(troops_w_sum = ifelse(is.finite(troops_w_sum), troops_w_sum, NA),
+         troops_w_mean = ifelse(is.finite(troops_w_mean), troops_w_mean, NA),
+         us_war_w_mean = ifelse(is.finite(us_war_w_mean), us_war_w_mean, NA),
+         conflictcount_w_mean = ifelse(is.finite(conflictcount_w_mean), conflictcount_w_mean, NA),
+         conflictcount_high_w_mean = ifelse(is.finite(conflictcount_high_w_mean), conflictcount_high_w_mean, NA),
+         conflictcount_low_w_mean = ifelse(is.finite(conflictcount_low_w_mean), conflictcount_low_w_mean, NA),
+         conflict_dummy_w_mean = ifelse(is.finite(conflict_dummy_w_mean), conflict_dummy_w_mean, NA),
+         imports_to_us_w_mean = ifelse(is.finite(imports_to_us_w_mean), imports_to_us_w_mean, NA),
+         exports_from_us_w_mean = ifelse(is.finite(exports_from_us_w_mean), exports_from_us_w_mean, NA),
+         protest_count_w_mean = ifelse(is.finite(protest_count_w_mean), protest_count_w_mean, NA),
+         protest_other_w_mean = ifelse(is.finite(protest_other_w_mean), protest_other_w_mean, NA),
+         anti_us_protest_w_mean = ifelse(is.finite(anti_us_protest_w_mean), anti_us_protest_w_mean, NA),
+         anti_us_mil_w_mean = ifelse(is.finite(anti_us_mil_w_mean), anti_us_mil_w_mean, NA),
+         defburden_w_mean = ifelse(is.finite(defburden_w_mean), defburden_w_mean, NA)) %>% 
+  filter(ccode1 != 2) %>% 
+  dplyr::rename("ccode" = "ccode1")
+
+
+
+# Create a time series frame with the total size of the US military by year
+# Military size 1954-1993
+
+milsize.1950.2005 <- readxl::read_xls(here::here("Raw Data", "troopMarch2005.xls"), sheet = 2) %>% # Kane's Heritage data.
+  slice(6) %>% 
+  dplyr::select(-1) %>% 
+  mutate_if(is.numeric, as.character) %>% # Some conflicting types after reading data in
+  group_by(Country) %>% 
+  pivot_longer(cols = 2:57,
+               values_to = "troops",
+               names_to = "year") %>% 
+  dplyr::select(Country, year, troops) %>% 
+  mutate_each(funs = as.numeric) %>% # Convert all to numeric for append 
+  filter(year <= 1993) 
+
+
+# Military size 1994-2012
+
+milsize <- readxl::excel_sheets(here::here("Raw Data", "AD_Strengths_FY1994-FY2012.xlsx"))
+
+milsize.list <- lapply(milsize, function(x) readxl::read_excel(here::here("Raw Data", "AD_Strengths_FY1994-FY2012.xlsx"), sheet = x))
+
+milsize.1.df <- bind_rows(milsize.list) %>% 
+  filter(grepl(".*GRAND TOTAL.*", Rank)) %>% 
+  dplyr::select("DoD Total") %>% 
+  mutate(year = seq(1994, 2012)) %>% 
+  dplyr::rename("Total" = "DoD Total") %>% 
+  mutate(troops = as.numeric(Total),
+         year = as.numeric(year)) %>% 
+  dplyr::select(troops, year)
+
+# Military size 2013-2016
+milsize <- readxl::excel_sheets(here::here("Raw Data", "AD_Strengths_FY2013-FY2016.xlsx"))
+
+milsize.list <- lapply(milsize, function(x) readxl::read_excel(here::here("Raw Data", "AD_Strengths_FY2013-FY2016.xlsx"), sheet = x))
+
+milsize.2.df <- bind_rows(milsize.list) %>% 
+  filter(grepl(".*GRAND TOTAL.*", `Department of Defense`)) %>% 
+  dplyr::rename("Total" = 6) %>% 
+  dplyr::select("Total") %>% 
+  mutate(year = seq(2013, 2016)) %>% 
+  mutate(troops = as.numeric(Total),
+         year = as.numeric(year)) %>% 
+  dplyr::select(troops, year)
+
+
+
+# 2017 and 2018 data
+
+# Troops 2017 (includes active duty only)
+milsize.2017 <- readxl::read_xlsx(here::here("Raw Data", "DMDC_Website_Location_Report_1712.xlsx"), skip = 5) %>% 
+  filter(grepl(".*GRAND.*", LOCATION)) %>% 
+  dplyr::select(8) %>% 
+  dplyr::rename("troops" = 1) %>% 
+  mutate(year = 2017) %>% 
+  mutate_each(as.numeric)
+
+
+# Troops 2018 (includes active duty only)
+milsize.2018 <- readxl::read_xlsx(here::here("Raw Data", "DMDC_Website_Location_Report_1812.xlsx"), skip = 5) %>% 
+  filter(grepl(".*GRAND.*", LOCATION)) %>% 
+  dplyr::select(8) %>% 
+  dplyr::rename("troops" = 1) %>% 
+  mutate(year = 2018) %>% 
+  mutate_each(as.numeric)
+
+
+milsize.1950.2018 <- bind_rows(milsize.1950.2005, milsize.1.df, milsize.2.df, milsize.2017, milsize.2018) %>% 
+  rename("usmilsize" = "troops")
+
+
+
+# UN Ideal Point Data
+undata <- read_delim(here("Raw Data", "Idealpoints.tab"), delim = "\t") %>% # Tab delimited
+  dplyr::select(ccode, idealpoint, year) %>% 
+  dplyr::filter(year >= 1950) %>% 
+  mutate(ccode2 = list(seq(2:999))) %>% 
+  unnest(ccode2)
+
+
+undata.2 <- read_delim(here("Raw Data", "Idealpoints.tab"), delim = "\t") %>% # Tab delimited
+  dplyr::select(ccode, idealpoint, year) %>% 
+  dplyr::filter(year >= 1950) %>% 
+  rename("ccode2" = "ccode")
+
+
+undata.com <- undata %>% 
+  full_join(undata.2, by = c("ccode2", "year")) %>% 
+  dplyr::arrange(ccode, ccode2, year) %>% 
+  filter(!is.na(idealpoint.y)) %>% 
+  filter(ccode2 == 2 | ccode2 == 365) %>% 
+  mutate(idealdistance = abs(idealpoint.x - idealpoint.y)) %>% 
+  select(ccode, ccode2, year, idealdistance) %>% 
+  pivot_wider(id_cols = c(ccode, year),
+              values_from = "idealdistance",
+              names_from = "ccode2",
+              names_prefix = "idealdistance_") %>% 
+  filter(ccode != 2) %>% 
+  mutate(ccode = ifelse(ccode == 260, 255, ccode)) %>% 
+  group_by(ccode, year) %>% 
+  arrange(ccode, year) 
+
+
+# ATOP alliance data
+ally.data <- read_csv(here("Raw Data/ATOP V4.01 Data (csv)", "atop4_01ddyr.csv")) %>% 
+  select(stateA, stateB, year, defense, offense) %>% 
+  filter(stateA == 2,
+         year >= 1950) %>% 
+  mutate(us_ally = ifelse(defense == 1 | offense == 1, 1, 0),
+         stateB = ifelse(stateB == 260, 255, stateB)) %>% 
+  select(stateB, year, us_ally) %>% 
+  rename("ccode" = "stateB") %>% 
+  group_by(ccode,  year) %>% 
+  summarise(us_ally = max(us_ally, na.rm = TRUE)) # Get rid of Germany duplicate
+
+
+# US Government Composition Data
+# The President chamber is missing from the 115th and 116th congresses. Code looks a little wild partly due to this. Also having to generate years.
+nom.data <- read_csv(here("Raw Data", "HSall_members.csv")) %>% 
+  filter(congress >= 81) %>% 
+  group_by(congress, chamber) %>% 
+  mutate(seats = n_distinct(paste(state_icpsr, district_code)),
+         reppres = ifelse(party_code == 200 & chamber == "President", 1, 0),
+         repmem = ifelse(party_code == 200, 1, 0)) %>% 
+  summarise(seats = max(seats, na.rm = TRUE),
+            repseats = sum(repmem),
+            reppres = max(reppres, na.rm = TRUE)) %>% 
+  group_by(chamber) %>% 
+  mutate(seats = ifelse(chamber == "Senate", seats * 2, seats),
+         seats = ifelse(chamber == "House", 435, seats),
+         repseatshare = repseats/seats) %>% 
+  pivot_wider(values_from = c("seats", "repseats", "repseatshare", "reppres"),
+              names_from = "chamber") %>% 
+  mutate(session = list(seq(1:2))) %>% 
+  unnest(session) %>% 
+  mutate(year = seq(1949, 2020, by = 1),
+         reppres = reppres_President,
+         reppres = ifelse(congress == 114, 0, reppres),
+         reppres = ifelse(congress == 116, 1, reppres),
+         repseatshare_change_house = repseatshare_House - dplyr::lag(repseatshare_House, order_by = congress),
+         repseatshare_change_house = ifelse(repseatshare_change_house == 0, dplyr::lag(repseatshare_change_house), repseatshare_change_house),
+         repseatshare_change_senate = repseatshare_Senate - dplyr::lag(repseatshare_Senate, order_by = congress),
+         repseatshare_change_senate = ifelse(repseatshare_change_senate == 0, dplyr::lag(repseatshare_change_senate), repseatshare_change_senate)) %>% 
+  dplyr::select("congress", "year", "seats_House", "seats_Senate", "repseats_House", "repseats_Senate", "repseatshare_House", "repseatshare_change_house", "repseatshare_change_senate", "repseatshare_Senate", "reppres") %>% 
+  rename("seats_house" = "seats_House", "seats_senate" = "seats_Senate", "repseats_house" = "repseats_House", "repseats_senate" = "repseats_Senate", "repseatshare_house" = "repseatshare_House", "repseatshare_senate" = "repseatshare_Senate")
+  
+
+# Create function to rescale variables by dividing by 1 million
+scale1k <- function(x, na.rm = FALSE) (x/1000)
+scale1m <- function(x, na.rm = FALSE) (x/1000000)
+
+# Combine data into single data frame
+protest.data.final <- vdem.data %>% 
+  left_join(aid.data, by = c("ccode", "year")) %>% 
+  left_join(gdp.data, by = c("ccode", "year")) %>% 
+  left_join(trade.data.final, by = c("ccode", "year")) %>% 
+  left_join(protest.combined, by = c("ccode", "year")) %>% 
+  left_join(mindist.df, by = c("ccode", "year")) %>%
+  left_join(troops.data.combined, by = c("ccode", "year")) %>% 
+  left_join(undata.com, by = c("ccode", "year")) %>% 
+  left_join(ally.data, by = c("ccode", "year")) %>% 
+  left_join(prio.data, by = c("ccode", "year")) %>% 
+  left_join(prio.us, by = c("ccode", "year")) %>% 
+  left_join(sipri.data, by = c("ccode", "year")) %>% 
+  left_join(milsize.1950.2018) %>% 
+  left_join(nom.data, by = c("year")) %>% 
+  dplyr::select(-c("country.y", "country_name")) %>% 
+  dplyr::rename("country" = "country.x") %>% 
+  mutate_at(vars("pop", "gdp", "imports_to_us", "exports_from_us", "econaid", "milaid", "troops", "troops_w_sum", "troops_w_mean", "troops_change"),
+            list(rescaled = ~scale1m(.))) %>% # Divide by 1000 for running stan models later.
+  mutate(us_ally = ifelse(is.na(us_ally), 0, us_ally),
+         us_war = ifelse(is.na(us_war), 0, us_war),
+         conflict_dummy = ifelse(is.na(conflict_dummy), 0, conflict_dummy)) %>% 
+  group_by(ccode) %>% 
+  mutate(exposure = n()) %>% # Generate exposure variable for models. Number of observatiosn for each country.
+  mutate_at(vars("gdp", "pop","exports_from_us", "imports_to_us"),
+            list(growth = ~((((.) - dplyr::lag(., order_by = year)) / lag(., order_by = year))))) %>% 
+  mutate_at(vars("pop","gdp", "v2x_polyarchy", "econaid", "milaid", "v2x_libdem", "imports_to_us", "exports_from_us", "pop_rescaled", "gdp_rescaled", "milaid_rescaled", "econaid_rescaled", "exports_from_us_rescaled", "imports_to_us_rescaled", "idealdistance_2", "idealdistance_365", "troops_w_sum", "troops_w_mean", "troops_w_mean_rescaled", "troops_w_sum_rescaled", "us_war_w_mean", "protest_count_w_mean", "anti_us_protest_w_mean", "anti_us_mil_w_mean"),
+            list(change = ~ ifelse(is.finite(.), (.) - dplyr::lag(., order_by = year), NA))) %>% # weed out Inf and NaN values.
+  mutate_at(vars("pop", "gdp", "v2x_polyarchy", "econaid", "milaid", "milaid_change", "troops_rescaled", "v2x_libdem", "imports_to_us", "exports_from_us", "idealdistance_2", "idealdistance_365", "troops", "troops_w_sum", "troops_w_mean", "troops_w_mean_change", "conflict_dummy", "us_war", "us_ally", "us_war_w_mean", "protest_count_w_mean", "anti_us_protest_w_mean", "anti_us_mil_w_mean", "defburden", "defburden_w_mean", "protest_count", "protest_other", "protest_other_w_mean", "protest_count_w_mean", ends_with("change"), ends_with("growth")),
+            list(c_mean = ~mean(., na.rm = TRUE),
+                 c_demeaned = ~(.) - mean(., na.rm = TRUE))) %>%
+  ungroup() %>% # I want to make sure the standardized demeaned scores, which are done by country, are standardized aacross the entire population of cases. Otherwise massive changes are smushed into the same tiny scale as smaller changes.
+  mutate_at(vars("v2x_polyarchy", "v2x_libdem", "pop", "gdp", "troops", "troops_change", "troops_w_mean", "protest_other", "idealdistance_2", "conflict_dummy", "us_war", "us_ally", "defburden_w_mean", "anti_us_protest_w_mean", "exports_from_us", "imports_to_us", ends_with("c_demeaned"), ends_with("c_mean"), ends_with("growth"), ends_with("change")),
+            list(z = ~rescale(.))) %>% 
+  mutate_at(vars("v2x_polyarchy", "v2x_libdem", "v2x_polyarchy_c_mean", "v2x_polyarchy_c_mean_z", "v2x_polyarchy_c_demeaned_z", "v2x_polyarchy_c_demeaned", "v2x_libdem_c_mean", "v2x_libdem_c_mean_z", "v2x_libdem_c_demeaned_z", "v2x_libdem_c_demeaned", "v2x_polyarchy_z"),
+            list(sq = ~(.)^2)) %>% 
+  mutate(usmilsize = usmilsize/1000, # This is a really big number for some states. Divide by 1,000,000
+         log_usmilsize = log(usmilsize)) %>% 
+  group_by(ccode) %>% 
+  mutate_at(vars(ends_with("z"), "protest_other", "protest_other_w_mean", "anti_us_protest_w_mean"),
+            list(lag = ~dplyr::lag(., order_by = year))) %>% 
+  ungroup() %>% 
+  mutate(coldwar = if_else(year <= 1989, 1, 0),
+         protest_us_dummy = ifelse(anti_us_protest > 0, 1, 0),
+         protest_mil_dummy = ifelse(anti_us_mil > 0 , 1, 0),
+         region = as.factor(countrycode(ccode, "cown", "region")), # 17 World bank regional groups
+         region2 = as.factor(countrycode(ccode, "cown", "continent")), # Five continent regional groups 
+         region3 = ifelse(ccode >= 600 & ccode <= 698, "Middle East and North Africa", paste(as.character(region2))),
+         region3 = as.factor(region3),
+         country = as.factor(country),
+         Iraqwar_dummy = ifelse(year == 2003, 1, 0),
+         Iraw_dummy = ifelse(ccode == 645, 1, 0),
+         mideast_dummy = ifelse(region3 == "Middle East and North Africa", "Middle East and North Africa", "Other Regions"),
+         conflictcount = ifelse(is.na(conflictcount), 0, conflictcount),
+         conflictcount_low = if_else(is.na(conflictcount_low), 0, conflictcount_low),
+         conflictcount_high = if_else(is.na(conflictcount_high), 0, conflictcount_high),
+         ccode = ifelse(ccode == 260, 255, ccode)) %>% 
+  filter(ccode > 2 & year >= 1988) %>%
+  ungroup()
+
+
+  write_csv(protest.data.final, here::here("Data/Chapter-Protests", "protest-data-final.csv"), append = FALSE)
+
+
+
+duplicatecheck <- protest.data.final %>% 
+  mutate(dup = 1) %>% 
+  group_by(ccode, year) %>% 
+  summarise(dups = sum(dup))
+
+
+
+# Note: I've performed checks and the standardized variables and regular demeaned variables are all both either positive or negative. We do not see contradictory signs.
+
+
+
+```

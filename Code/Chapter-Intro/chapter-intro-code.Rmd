@@ -1,0 +1,161 @@
+---
+title: "Introduction"
+author: "Michael Flynn"
+date: "`r Sys.Date()'"
+output:
+  html_document:
+    df_print: paged
+bibliography: "/Chapters/one.bib"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+
+# Front Matter
+
+This section loads the data files and libraries. Assembles the main data
+
+```{r setup , echo = FALSE, include = FALSE}
+
+library(tidyverse)
+library(tidyr)
+library(broom)
+library(broom.mixed)
+library(psych)
+library(ipw)
+library(modelr)
+library(cshapes)
+library(maps)
+library(countrycode)
+library(dagitty)
+library(ggdag)
+library(arm)
+library(brms)
+library(rstan)
+library(cmdstanr)
+library(parallel)
+library(tidybayes)
+library(scales)
+library(ggdist)
+library(kableExtra)
+library(BayesPostEst)
+library(texreg)
+library(modelsummary)
+library(gt)
+library(webshot)
+library(kableExtra)
+library(ggExtra)
+library(ggmcmc)
+library(ggpubr)
+library(patchwork)
+library(here)
+library(arm)
+library(performance)
+library(ROCR)
+library(tictoc)
+library(remotes)
+
+
+
+theme_flynn <- theme_linedraw() + theme(text = element_text(size = 11),
+                                        plot.title = element_text(face = "bold", size = 14),
+                                        plot.subtitle = element_text(size = 12),
+                                        plot.caption = element_text(face = "italic", size = 8),
+                                        strip.background = element_rect(fill = "gray80", color = "black"),
+                                        strip.text = element_text(color = "black", face = "bold"),
+                                        panel.grid.major = element_line(color = "gray70", size = 0.15),
+                                        panel.grid.minor = element_line(color = "gray90", size = 0.1))
+
+
+
+# Set Seed
+SEED <- 66502
+set.seed(seed = SEED)
+
+```
+
+
+
+# Figures
+
+```{r maps of deployments in 1950}
+
+
+troop.data <- readstata13::read.dta13(here("Raw Data/troops 1950-2020.dta")) %>% 
+  filter(year == 1950) %>% 
+  filter(ccode != 2)
+
+
+map.base <- map_data("world")
+
+map.1950 <- cshp(date = as.Date("1950-01-01")) 
+
+map.1950.df <- tidy(map.1950, region = "COWCODE") %>% 
+  mutate(country = countrycode(id, "cown", "country.name"),
+         id = as.numeric(id)) %>% 
+  left_join(troop.data, by = c("id" = "ccode"))
+
+
+ggplot() +
+  geom_polygon(data = map.base, aes(x = long, y = lat, group = group), fill = "gray90") +
+  geom_polygon(data = map.1950.df, aes(x = long, y = lat, group = group, fill = troops), color = "white", size = 0.1) +
+  theme_void() +
+  scale_fill_distiller(palette = "BuPu", direction = 1, na.value = "gray90", breaks = c(0, 20, 200, 2000, 20000, 200000), limits = c(0, 200000), trans = "log1p", label = comma_format()) +
+  labs(fill = "Deployment\nSize")
+
+ggsave(here("Figures/Chapter-Intro/figure-map-troops-1950.png"), width = 8, height = 5, units = "in")
+
+
+```
+
+
+
+```{r maps of deployments in 2020}
+
+
+troop.data <- readstata13::read.dta13(here("Raw Data/troops 1950-2020.dta")) %>% 
+  filter(year == 2020 & ccode != 2)
+
+
+map.base <- map_data("world")
+
+map.2000 <- cshp(date = as.Date("2016-01-01")) 
+
+map.2000.df <- tidy(map.2000, region = "COWCODE") %>% 
+  mutate(country = countrycode(id, "cown", "country.name"),
+         id = as.numeric(id)) %>% 
+  left_join(troop.data, by = c("id" = "ccode"))
+
+
+ggplot() +
+  geom_polygon(data = map.base, aes(x = long, y = lat, group = group), fill = "gray90") +
+  geom_polygon(data = map.2000.df, aes(x = long, y = lat, group = group, fill = troops), color = "white", size = 0.1) +
+  theme_void() +
+  scale_fill_distiller(palette = "BuPu", direction = 1, na.value = "gray90", breaks = c(0, 20, 200, 2000, 20000, 200000), limits = c(0, 200000), trans = "log1p", label = comma_format()) +
+  labs(fill = "Deployment\nSize")
+
+ggsave(here("Figures/Chapter-Intro/figure-map-troops-2020.png"), width = 8, height = 5, units = "in")
+
+
+```
+
+#Tables
+
+```{r table for countries and years}
+
+load("C:/Users/flynn/Dropbox/Projects/Minerva grant documents/Book/Data/General/opinion.data.RData")
+
+table <- o.data %>% 
+  group_by(country, year) %>% 
+  dplyr::summarise(N = length(year)) %>% 
+  pivot_wider(names_from = year,
+              values_from = N) %>% 
+  filter(!is.na(country)) %>% 
+  dplyr::rename("Country" = "country") %>% 
+  kable(booktabs = TRUE, format = "latex", caption = "Summary of countries surveyed and annual observation count") %>% 
+  kable_styling(latex_options = c("striped", "repeat_header"), protect_latex = TRUE, font_size = 10) %>% 
+  save_kable(here("Tables/Chapter-Intro/table-country-summary.tex"))
+
+
+```
