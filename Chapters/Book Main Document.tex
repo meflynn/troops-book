@@ -1,0 +1,155 @@
+\documentclass[12pt]{book}
+\usepackage{amsmath,amssymb,graphicx,paralist,setspace,amsthm,pdflscape,fancyhdr,fullpage,rotating,tikz,xcolor,float,varwidth,eurosym,caption,booktabs,afterpage,dcolumn,xcolor,colortbl,threeparttable,txfonts,pxfonts}
+%\usepackage{times}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{longtable}
+\usepackage{sectsty}
+\usepackage[compact]{titlesec}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{dcolumn}
+\usepackage{subfigure}
+%\usepackage{harvard}
+\usepackage[]{har2nat}
+\setcitestyle{aysep={}}
+\setcitestyle{notesep={, }}
+%\citationstyle{dcu}\usepackage{appendix}
+\usepackage[space]{grffile}
+\bibliographystyle{apsr}
+\usepackage[urlcolor=blue,citecolor=blue,linkcolor=blue,linktocpage=true,backref=true]{hyperref}
+\usepackage{setspace} % load setspace before footmisc
+\usepackage{footmisc}
+\renewcommand{\footnotelayout}{\doublespacing}
+\setlength{\footnotesep}{\baselineskip}
+\hypersetup{
+	colorlinks=true,
+	urlcolor=blue
+}
+
+\newtheorem{hyp}{Hypothesis}[chapter]
+\makeatletter
+
+\newcounter{subhyp} 
+\let\savedc@hyp\c@hyp
+\newenvironment{subhyp}
+{%
+	\setcounter{subhyp}{0}%
+	\stepcounter{hyp}%
+	\edef\saved@hyp{\thehyp}% Save the current value of hyp
+	\let\c@hyp\c@subhyp     % Now hyp is subhyp
+	\renewcommand{\thehyp}{\saved@hyp\alph{hyp}}%
+}
+{}
+\newcommand{\normhyp}{%
+	\let\c@hyp\savedc@hyp % revert to the old one
+	\renewcommand\thehyp{\arabic{hyp}}%
+} 
+\usepackage{placeins}
+%\usepackage{subfiles}
+%\includeonly{Chapter-Intro,Chapter-Minorities,Chapter-Protests}
+
+\usepackage[space]{grffile}
+\graphicspath{{./}{./Data/}{./Tables/}{./Figures/}}
+
+\newcommand{\possessivecite}[1]{\citeauthor{#1}'s \citeyear{#1}}
+
+
+%\titleformat{\chapter}{\bf\arge}{\thechapter}{1em}{}
+%\titleformat{\section}{\bf\normalsize}{\thesection}{1 em}{}
+\subsubsectionfont{\normalfont\itshape}
+
+
+\pagestyle{empty}
+
+%\includeonly{chapter1,chapter2,bibliography}
+%\includeonly{abstract,chapter4}
+
+\begin{document}
+
+\begin{titlepage}
+	\title{Outside the Wire: U.S. Military Deployments and the Diplomacy of Defense \label{cha:min}}
+	\author{Michael A. Allen\thanks{\textbf{Email:} \href{mailto:michaelaallen@boisestate.edu}{\tt michaelaallen@boisestate.edu}. \textbf{Contact:} Department of Political Science, Boise State University, 1910 University Drive, Boise, ID 83725.}\\
+		Department of Political Science\\
+		Boise State University \\
+		\and Michael E. Flynn\thanks{\textbf{Email:} \href{mailto:meflynn@ksu.edu}{\tt meflynn@ksu.edu}. \textbf{Contact:} Department of Political Science, 019B Calvin Hall, Kansas State University, Manhattan, KS 66506.} \\
+		Department of Political Science \\
+		Kansas State University \\
+		\and
+		Carla Martinez Machain\thanks{\textbf{Email:} \href{mailto:carlamm@ksu.edu}{\tt carlamm@ksu.edu}. \textbf{Contact:} Department of Political Science, 019B Calvin Hall, Kansas State University, Manhattan, KS 66506.}\\
+		Department of Political Science\\
+		Kansas State University \\
+		\and
+		Andrew Stravers\thanks{\textbf{Email:} \href{mailto:stravers@utexas.edu }{\tt stravers@utexas.edu }. \textbf{Contact:} The University of Texas at Austin, 158 W 21st ST STOP A1800, Batts Hall 2.116, Austin, TX 78712-1704.}\\
+		Department of Government\\
+		University of Texas--Austin
+	}
+	
+	\maketitle
+
+	\thispagestyle{empty}
+\end{titlepage}
+
+
+
+\frontmatter
+
+\pagestyle{empty}
+
+
+%\include{copyright}
+
+
+\include{Dedication}
+\include{Acknowledgments}
+
+\tableofcontents
+
+
+
+\listoftables
+\addcontentsline{toc}{section}{List of Tables}
+
+
+\listoffigures
+\addcontentsline{toc}{section}{List of Figures}
+
+
+
+\pagestyle{plain}
+\newpage
+
+\include{Acronyms}
+
+\mainmatter
+
+\include{Chapter-Intro}
+\include{Chapter-Theory}
+\include{Chapter-Methods-Contact}
+%\setcounter{chapter}{4}
+\include{Chapter-Minorities}
+\include{Chapter-Crimes}
+%\setcounter{chapter}{6}
+\include{Chapter-Protests}
+\include{Chapter-Conclusions}
+
+
+%\setcounter{page}{107}
+\include{Appendix}
+\backmatter
+\clearpage
+\pagebreak
+
+\addcontentsline{toc}{chapter}{\bibname}
+
+\bibliography{one}
+
+
+
+\clearpage
+\pagebreak
+
+
+\end{document}
+
+bibtext : build/% include-directory=build

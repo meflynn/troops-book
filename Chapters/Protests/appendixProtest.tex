@@ -1,0 +1,401 @@
+\documentclass[12pt]{article}
+\usepackage{amsmath,amssymb,paralist,setspace,amsthm,pdflscape,fancyhdr,fullpage,rotating,tikz,xcolor,float,varwidth,eurosym,graphicx}
+%\usepackage{times}
+\usepackage{longtable}
+%\usepackage{underscore}
+\usepackage{sectsty}
+%\usepackage[compact]{titlesec}
+\sectionfont{\flushleft\large}
+\subsectionfont{\flushleft\normalsize}
+\usepackage{subfigure}
+%\usepackage{harvard}
+\usepackage[]{har2nat}
+\setcitestyle{aysep={}}
+\setcitestyle{notesep={, }}
+%\citationstyle{dcu}\usepackage{appendix}
+\usepackage[space]{grffile}
+\bibliographystyle{apsr}
+\newtheorem{hypot}{Hypothesis}
+\usepackage[urlcolor=blue,citecolor=blue,linkcolor=blue,linktocpage=true,backref=true]{hyperref}
+\usepackage{setspace} % load setspace before footmisc
+\usepackage{footmisc}
+\renewcommand{\footnotelayout}{\doublespacing}
+\setlength{\footnotesep}{\baselineskip}
+\hypersetup{
+	colorlinks=true,
+	urlcolor=blue
+}
+\usepackage[space]{grffile}
+\graphicspath{{./}{./Data/}}
+
+\newcommand{\possessivecite}[1]{\citeauthor{#1}'s \citeyear{#1}}
+
+%\titlespacing{\section}{0pt}{*0}{*0}
+%\titlespacing{\subsection}{0pt}{*0}{*0}
+%\titlespacing{\subsubsection}{0pt}{1cm}{*0}
+
+\begin{document}
+
+
+\appendix
+\section*{Appendix} 
+\setcounter{table}{0}
+\renewcommand{\thetable}{A\arabic{table}}
+\setcounter{figure}{0}
+\renewcommand{\thefigure}{A\arabic{figure}}
+
+This appendix contains additional information relevant to the primary manuscript, such as survey questions, a full table of our primary models, and additional information on how we conducted and executed our survey.\\  
+
+
+
+\newpage
+
+\tableofcontents
+\listoftables
+\listoffigures
+
+
+\clearpage
+
+\section{Variable codebook}
+
+Below we provide a list of all of the variables included in our models as well as the coding schemes for each. 
+
+\subsection{Country Information}
+\newcounter{survey}
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Country Abbreviation (iso3c)} \\
+Uses the Correlates of War Abbreviation. \\
+\textbf{Values:}\\
+\indent AUS - Australia \\
+\indent BEL - Belgium\\
+\indent GMY - Germany\\
+\indent ITA - Italy\\
+\indent JPN - Japan\\
+\indent KUW - Kuwait\\
+\indent NTH - Netherlands\\
+\indent PHI - Philippines\\
+\indent POL - Poland\\
+\indent POR - Portugal\\
+\indent ROK - South Korea\\
+\indent SPN - Spain\\
+\indent TUR - Turkey\\
+\indent UKG - United Kingdom\\
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Language} \\
+The language the respondent took the survey in.\\
+\textbf{Values:}\\
+\indent 1 - English\\
+\indent 2 - Dutch\\
+\indent 3 - French\\
+\indent 4 - German\\
+\indent 5 - Italian\\
+\indent 6 - Japanese\\
+\indent 7 - Arabic \\
+\indent 8 - Tagalog\\
+\indent 9 - Polish\\
+\indent 10 - Portuguese\\ 
+\indent 11 - Korean \\
+\indent 12 - Spanish \\
+\indent 13 - Turkish\\
+
+
+\subsection{Dependent Variables}
+
+Note that for the dependent variables listed below we recode the variables when we estimate our ordered logit models. Due to a bug present in Stata, ordered models run on dependent variables with a lowest category higher than ``1'' frequently return errors when running various post-estimation commands. We drop the ``Don't know/decline to answer'' responses and recode each other response by subtracting 1 to obtain a final coding scheme running 1--5. \\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: US Military Presence (troops\_1)} \\
+``In general, what is your opinion of the presence of American military forces in (respondent's country)?''\\
+\textbf{Values:}\\
+\indent 1 - Don’t know/decline to answer\\
+\indent 2 - Very favorable \\
+\indent 3 - Somewhat favorable\\
+\indent 4 - Neutral\\
+\indent 5 - Somewhat unfavorable\\
+\indent 6 - Very unfavorable\\
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: American Government (american\_gov)} \\
+``In general, what is your opinion of the American government?''\\
+\textbf{Values:}\\
+\indent 1 - Don’t know/decline to answer\\
+\indent 2 - Very favorable \\
+\indent 3 - Somewhat favorable\\
+\indent 4 - Neutral\\
+\indent 5 - Somewhat unfavorable\\
+\indent 6 - Very unfavorable\\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: American People (american\_people)} \\
+``In general, what is your opinion of the American people?''\\
+\textbf{Values:}\\
+\indent 1 - Don’t know/decline to answer\\
+\indent 2 - Very favorable \\
+\indent 3 - Somewhat favorable\\
+\indent 4 - Neutral\\
+\indent 5 - Somewhat unfavorable\\
+\indent 6 - Very unfavorable\\
+
+
+
+
+\subsection{Independent Variables}
+
+These variables represent either data coded automatically by our survey services or questions we asked the respondents. 
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Direct Contact with US Military  (contact\_pers)} \\
+``Have you personally had direct contact with a member of the American military in (respondent's country)?''\\
+\textbf{Values:}\\
+\indent 1 - Yes\\
+\indent 2 - No\\
+\indent 3 - Don’t know/Decline to answer\\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Family Contact with US Military  (contact\_nonpers)} \\
+``Has a member of your family or close friend had direct contact with a member of the American military stationed in (respondent's country)?''\\
+\textbf{Values:}\\
+\indent 1 - Yes\\
+\indent 2 - No\\
+\indent 3 - Don’t know/Decline to answer\\
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Economic benefit US Military  (benefit\_pers)} \\
+``Have you personally received a direct economic benefit from the American military presence in (respondent's country)? Examples include employment by the US military, employment by a contractor that does business with the US military, or ownership/employment at a business that frequently serves US military personnel.''\\
+\textbf{Values:}\\
+\indent 1 - Yes\\
+\indent 2 - No\\
+\indent 3 - Don’t know/Decline to answer\\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Family Economic Benefit US Military  (benefit\_nonpers)} \\
+``Has a member of your family or close friend received a direct economic benefit from the American military presence in (respondent's country)? Examples include employment by the US military, employment by a contractor that does business with the US military, or ownership/employment at a business that frequently serves US military personnel.''\\
+\textbf{Values:}\\
+\indent 1 - Yes\\
+\indent 2 - No\\
+\indent 3 - Don’t know/Decline to answer\\
+
+
+ \noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Gender} \\
+What is your gender?\\
+\textbf{Values:}\\
+\indent 1 - Male \\
+\indent 2 - Female\\
+\indent 3 - Non-binary\\
+\indent 4 - None of the above\\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Minority} \\
+Do you identify as a racial, ethnic, or religious minority?\\
+\textbf{Values:}\\
+\indent 1 - Yes\\
+\indent 2 - No\\
+\indent 3 - Decline to Answer\\
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Education} \\
+How many years of formal education have you completed?\\
+\textbf{Values:}\\
+\textbf{Values:} 0-99999\\
+
+\noindent Note: Given a number of outliers resulting from the self-coding process we used in our questions, we truncate the education variable at 25 years when we estimate our models to eliminate extreme outliers. This covers up to 9 years of graduate education. \\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Age} \\
+What is your age?\\
+\textbf{Values:}\\
+\textbf{Values:} 0-99999\\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Income - Schmeidl (incomesm)} \\
+What is your total household income during the past 12 months? \\
+This had a range for each of the six countries, which is the following. All categories are combined as 1-6 in the data. We recommend combining scores 5 and 6 to represent the upper income bracket to match the quintile distributions from the Qualtrics survey.\\
+\textbf{Values:}\\
+\indent 1 - Bottom Bracket\\
+\indent 2 - 2nd Bracket\\
+\indent 3 - 3rd Bracket\\
+\indent 4 - 4th Bracket\\
+\indent 5 - 5th Bracket\\
+\indent 6 - Top Bracket\\
+
+United Kingdom:\\
+\indent 1 - $<$\pounds20,000\\
+\indent 2 - \pounds20,000 - $<$\pounds35,000\\
+\indent 3 - \pounds35,000 - $<$\pounds50,000\\
+\indent 4 - \pounds50,000 - $<$\pounds75,000\\
+\indent 5 - \pounds75,000 - $<$\pounds100,000\\
+\indent 6 - \pounds100,000 and more\\
+
+Germany:\\
+\indent 1 - <20.000\EUR{}\\
+\indent 2 - 20.000\EUR{} - 29.999\EUR{}\\
+\indent 3 - 30.000\EUR{} - 39.999\EUR{}\\
+\indent 4 - 40.000\EUR{} - 49.999\EUR{}\\
+\indent 5 - 50.000\EUR{} - 59.000\EUR{}\\
+\indent 6 - 60.000\EUR{} +\\
+
+Italy:\\
+\indent 1 - <20.000\EUR{}
+\indent 2 - 20.000\EUR{} - 29.999\EUR{}\\
+\indent 3 - 30.000\EUR{} - 39.999\EUR{}\\
+\indent 4 - 40.000\EUR{} - 49.999\EUR{}\\
+\indent 5 - 50.000\EUR{} - 59.000\EUR{}\\
+\indent 6 - 60.000\EUR{} +\\
+
+Kuwait:\\
+\indent 1 - Less than 3000 KWD\\
+\indent 2 - 3 000 - less than 6 000 KWD\\
+\indent 3 - 6 000 - less than 12 000 KWD\\
+\indent 4 - 12 000 - less than 18 000 KWD\\
+\indent 5 - 18 000 - less than 24000 KWD\\
+\indent 6 - More than 24000 KWD\\
+
+Japan:\\
+\indent 1 - Less than 2 million yen\\
+\indent 2 - 2 million yen - less than 4 million yen\\
+\indent 3 - 4 million yen - less than 7 million yen\\
+\indent 4 - 7 million yen - less than 10 million yen\\
+\indent 5 - 10 million yen - less than 15 million yen\\
+\indent 6 - More than 15 million yen\\
+
+South Korea\\
+\indent 1 - Less than 25 million KRW\\
+\indent 2 - 25 million - less than 35 million KRW\\
+\indent 3 - 35 million - less than 45 million KRW\\
+\indent 4 - 45 million - less than 60 million KRW\\
+\indent 5 - 60 million - less than 80 million KRW\\
+\indent 6 - More than 80 million KRW\\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Religion} \\
+What is your religion, if any?\\
+\textbf{Values:}\\
+\indent 1 - Christianity (Protestant) \\
+\indent 2 - Catholicism\\
+\indent 3 - Islam\\
+\indent 4 - Agnostic/Atheist\\
+\indent 5 - Hinduism\\
+\indent 6 - Buddhism\\
+\indent 7 - Shinto\\
+\indent 8 - Judaism\\
+\indent 9 - Mormonism\\
+\indent 10 - Local religion\\
+\indent 11 - Other: \\
+\indent 12 - Decline to Answer\\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Religion Other (religionother)} \\
+Open text responses for the Other bracket option in the previous question.\\
+\noindent\textbf{Value Range:} Free-form text.\\
+
+
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Political Views (ideology)} \\
+``People often talk about political issues and views in terms of a “left” and “right” spectrum. Using the following scale, where would you place yourself in terms of political views?''\\
+\textbf{Values:}\\
+\indent 1 - 1 - LEFT\\
+\indent 2 - 2\\
+\indent 3 - 3\\
+\indent 4 - 4\\
+\indent 5 - 5\\
+\indent 6 - 6\\
+\indent 7 - 7\\
+\indent 8 - 8\\
+\indent 9 - 9\\
+\indent 10 - 10 - RIGHT\\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: Favor Democracy (demgov)} \\
+``In general, how important is it to you that you live under a democratic government?''\\
+\textbf{Values:}\\
+\indent 1 - Very important\\
+\indent 2 - Somewhat important\\
+\indent 3 - Neutral\\
+\indent 4 - Not important\\
+\indent 5 - Don’t know/decline to answer\\
+
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: US Influence (american\_inf\_1)} \\
+`` In your opinion, how much influence does the United States have in (respondent's country)?''\\
+\textbf{Values:}\\
+\indent 1 - A lot\\
+\indent 2 - Some\\
+\indent 3 - A little\\
+\indent 4 - None\\
+\indent 5 - Don’t know/Decline to answer\\
+
+
+\noindent\textbf{\stepcounter{survey}\arabic{survey}  - Question: US Influence Effect (american\_inf\_2)} \\
+``In your opinion, the influence that the United States has in (respondent's country) is\ldots''\\
+\textbf{Values:}\\
+\indent 1 - Very positive\\
+\indent 2 - Positive\\
+\indent 3 - Neither Positive nor Negative\\
+\indent 4 - Negative\\
+\indent 5 - Very Negative\\
+\indent 6 - Don’t know/Decline to answer\\
+
+
+\clearpage
+\pagestyle{empty}
+
+\section{Supplementary Tables and Figures}
+
+
+
+\begin{table}[th]
+\caption{Correlation matrix of key variables} 
+\label{tab:corrmatrix}
+\scalebox{.68}{
+\begin{tabular}{l c c c c c c c}\hline
+Variable Name & Military Personnel & U.S. Government & U.S. People & Contact & Network Contact & Benefit & Network Benefit \\ \hline
+Military Personnel&1.000&0.500&0.424&-0.156&-0.139&-0.166&-0.159\\
+U.S. Government&0.500&1.000&0.480&-0.104&-0.105&-0.175&-0.163\\
+U.S. People&0.424&0.480&1.000&-0.130&-0.116&-0.129&-0.117\\
+Contact&-0.156&-0.104&-0.130&1.000&0.475&0.397&0.364\\
+Network Contact&-0.139&-0.105&-0.116&0.475&1.000&0.392&0.440\\
+Benefit&-0.166&-0.175&-0.129&0.397&0.392&1.000&0.534\\
+Network Benefit&-0.159&-0.163&-0.117&0.364&0.440&0.534&1.000\\ \hline\hline
+\end{tabular}} \\ 
+\end{table}
+
+\subsection{Correlation among variables of interest:}
+
+Table \ref{tab:corrmatrix} shows the correlation coefficients for the three dependent variables and the four primary independent variables of interest. Importantly, the highest correlation coefficients we find are between the benefit and network benefit variables (0.53), the military personnel and U.S. people variables (0.42), the contact and network contact variables (0.48), and between attitudes towards the U.S. government and U.S. military personnel (0.50). Most of the other variables yield lower correlation coefficients. 
+
+Though some of these variables are clearly related, the relatively modest scores here help, as well as the results from the primary manuscript, give us greater confidence that these questions are tapping into distinct attitudes and experiences. 
+
+\clearpage
+
+
+\begin{figure}[th]
+ \centering  \scalebox{.8}{\includegraphics{../Figures/figure-map-survey-coverage.pdf}}
+  \caption{Map of survey coverage. Country shading represents the firm conducting the survey in that particular country.}
+ \label{fig:surveycoverage}
+\end{figure}
+
+\begin{table}[h]
+     \begin{center}
+          \caption{Survey coverage table}
+          \label{tab:surveytable}
+          \input{../Tables/survey-info-table.tex}
+     \end{center}
+\end{table}
+
+\section{Survey Coverage}
+
+Figure \ref{fig:surveycoverage} and Table \ref{tab:surveytable} show the countries included in our analysis and help to illustrate the geographic coverage of our survey. Our initial rules for inclusion were based on a count of the countries that had an average of $\geq100$ U.S. military personnel per year deployed within their borders since 1990. This yielded a fairly large initial sample of 34 countries. From this list we further identified the countries that had average annual deployment levels $\geq$ 10,000 U.S. military personnel (the United Kingdom, Germany, Italy, South Korea, and Japan). We added Kuwait to this list as the value fell just below the 10,000 threshold. From there we proceeded to include other countries where the U.S. military presence was likely to be large enough to elicit a reaction from the public, thereby providing the variation we need the conduct our survey. We also focused on countries where the U.S. military had a historically notable presence, or cases that were of contemporary relevance. 
+
+For example, the average value for the Philippines is only 1,042 but the the long historical presence of U.S. military facilities in the Philippines, as well as that country's status as a former colony, makes it an attractive case. Alternatively,  Poland has an average score of 28 U.S. personnel since 1990, but with recent Russian aggression and the increase in U.S. personnel deployed to Poland, this is a case that is of great contemporary relevance for our analysis as it will help us to look at attitudes towards U.S. military personnel in a country that does not have a long-term history of hosting such deployments. 
+
+Other cases, like Belgium, Spain, the Netherlands, and Portugal allow us to assess variation in attitudes among countries that share a relatively similar geographic and political history, as well as countries who all belong to NATO. Further, countries like Portugal provide us with an opportunity to explore how variation in the type of U.S. military personnel affects attitudes, as it receives mostly Navy personnel as compared to the Army-heavy deployments in countries Germany. 
+
+Finally, there is a notable lack of countries represented in Africa and South America. This is for a couple of reasons. First, the only country in South America with a notable history of hosting U.S. military personnel is Panama. However, this is largely due to a brief spike in deployments following the U.S. invasion. In general, most Latin American countries have not played host to large long-term deployments in the way that countries in Europe and the Asia-Pacific region have. Those deployments that do occur in Latin America are generally short-term military exercises that tend to occur outside of the public's view. Though there is some limited interaction with the public during some of these deployments, it is not of the same frequency or intensity as in other cases. Members of our team have addressed the effects of these types of deployments in other work, but we have opted to exclude them from our current survey effort so as to focus on other cases with a history of hosting larger deployments over long periods of time. 
+
+However, we have conducted fieldwork in two Latin American countries as a part of this project---Panama and Peru. Panama is of clear historic importance given the U.S. invasion in 1989, and Peru has hosted multiple rounds of military exercises conducted by the U.S. military in conjunction with other partner countries throughout Latin American on an annual basis. In each case we interviewed U.S. military personnel, local politicians, journalists, and policymakers in an effort to better understand the nature of the U.S. military's activities in these countries, as well as how the U.S. military relates to the host-state public. Given the smaller and more episodic nature of the deployments, we believe these interviews were a more effective approach for covering Latin America than the use of large-N surveys.
+
+Similarly, U.S. longer-term deployments in Africa are relatively new, but most are still relatively small in scale. None of the countries on our base list counting those that averaged $\geq$ 100 personnel per year were in Africa. Furthermore, those that are currently in Africa tend to be oriented towards military training and counter-terror operations. Unlike the larger deployments in Western Europe, these deployments are smaller and more focused in purpose, and do not tend to interact with the host-state population in the ways that deployments in other regions historically have.
+
+
+\clearpage
+
+\end{document}
