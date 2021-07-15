@@ -11,6 +11,7 @@ output:
 
 ```{r setup}
 library(tidyverse)
+library(job)
 library(WDI)
 library(psych)
 library(tidyquant)
@@ -28,9 +29,9 @@ library(rmapshaper)
 library(maptools)
 library(GADMTools)
 library(rgeos)
-library(GADMTools)
 library(sp)
 library(troopdata)
+library(peacesciencer)
 library(raster)
 library(ggdist)
 library(kableExtra)
@@ -69,7 +70,7 @@ Notes:
 
 # Create list for base location data 
 base.list <- list()
-file.names <- list.files(here("../Geographic files/Base locations"), pattern = ".csv", full.names = TRUE)
+file.names <- list.files(here::here("../Geographic files/Base locations"), pattern = ".csv", full.names = TRUE)
 base.list <- lapply(file.names, read_csv)
 
 # Create list of map files
@@ -80,16 +81,16 @@ map.list[[1]]  <- getData("GADM", country = "AUS", level = 1)
 map.list[[2]]  <- getData("GADM", country = "BEL", level = 2)
 map.list[[3]]  <- getData("GADM", country = "DEU", level = 1)
 map.list[[4]]  <- getData("GADM", country = "ITA", level = 1)
-map.list[[5]]  <- readOGR(here("../Military Spending/Shapefiles/japanpolygonChubu Region_AL375/Chubu Region_AL3.shp"))
+map.list[[5]]  <- readOGR(here::here("../Military Spending/Shapefiles/japanpolygonChubu Region_AL375/Chubu Region_AL3.shp"))
 map.list[[6]]  <- getData("GADM", country = "KWT", level = 1)
 map.list[[7]]  <- getData("GADM", country = "NLD", level = 1)
 map.list[[8]]  <- getData("GADM", country = "PHL", level = 1)
 map.list[[9]]  <- getData("GADM", country = "POL", level = 1)
 map.list[[10]] <- getData("GADM", country = "PRT", level = 1)
-map.list[[11]] <- readOGR(here("../Military Spending/Shapefiles/Korea regions/Korea-regions.shp"))
+map.list[[11]] <- readOGR(here::here("../Military Spending/Shapefiles/Korea regions/Korea-regions.shp"))
 map.list[[12]] <- getData("GADM", country = "ESP", level = 1)
 map.list[[13]] <- getData("GADM", country = "TUR", level = 1)
-map.list[[14]] <- readOGR(here("../Military Spending/Shapefiles/UK regions/UK-regions.shp"))
+map.list[[14]] <- readOGR(here::here("../Military Spending/Shapefiles/UK regions/UK-regions.shp"))
 
 # Create empty lists for point in poly output and final data frame output
 point.list <- list()
