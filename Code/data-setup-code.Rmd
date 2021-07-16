@@ -6,6 +6,8 @@ date: "`r Sys.Date()'"
 output:
   html_document:
     df_print: paged
+editor_options: 
+  chunk_output_type: console
 ---
 
 
@@ -13,6 +15,7 @@ output:
 library(tidyverse)
 library(job)
 library(WDI)
+library(readxl)
 library(psych)
 library(tidyquant)
 library(modelr)
@@ -45,12 +48,14 @@ library(arm)
 library(tictoc)
 library(cmdstanr)
 
-
-
-
-
 #install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
 #cmdstanr::install_cmdstan()
+
+# Survey run dates
+# Wave 1: 2018-09 through 2018-11
+# Wave 2: 2019-07 through 2019-08
+# Wave 3: 2020-04 through 2020-05
+
 
 ```
 
@@ -178,7 +183,7 @@ base.provinces <- bind_rows(final.list) %>%
                                        ifelse(!is.na(NAME_2), NAME_2, NAME_1)))) %>% 
   group_by(`Country Name`, province.name) %>% 
   dplyr::summarise(basecount = sum(base, na.rm = TRUE)) %>% 
-  filter(!is.na(province.name)) %>% 
+  dplyr::filter(!is.na(province.name)) %>% 
   dplyr::rename("province" = "province.name", "country" = "Country Name") %>% 
     mutate(country = ifelse(country == "Poland, Rep. of", "Poland", country),
            country = ifelse(country == "Korea, Rep. of", "South Korea", country),
@@ -289,12 +294,6 @@ base.provinces <- bind_rows(final.list) %>%
       province = ifelse(province == "Chubu region", "Chubu", province),
       province = ifelse(province == "Chugoku region", "Chugoku", province),
       province = ifelse(grepl("Hokkai", province), "Hokkaido", province))
-
-
-
-
-
-
 
 
 
@@ -443,36 +442,93 @@ netherlandsfilter <- c("Curaçao, Kingdom of the Netherlands", "Sint Maarten, Ki
 
 `%notin%` <- Negate(`%in%`) # create this to get rid of lots of duplicate Netherlands values. Appear as a result of protectorates or territories. 
 
-imf.exp <- readxl::read_xlsx(here("Raw Data/Exports_and_Imports_by_Areas_and_Co.xlsx"), sheet = 1, skip = 5)
-imf.imp <- readxl::read_xlsx(here("Raw Data/Exports_and_Imports_by_Areas_and_Co.xlsx"), sheet = 2, skip = 5)
+imf.imp <- readxl::read_xlsx(here::here("Raw Data/Exports_and_Imports_by_Areas_and_Co (4).xlsx"), sheet = 2, skip = 5)
+imf.exp <- readxl::read_xlsx(here::here("Raw Data/Exports_and_Imports_by_Areas_and_Co (4).xlsx"), sheet = 1, skip = 5)
+
+# Survey run dates
+# Wave 1: 2018-09 through 2018-11
+# Wave 2: 2019-07 through 2019-08
+# Wave 3: 2020-04 through 2020-05
 
 
 imf.exp.long <- imf.exp %>% 
   dplyr::rename("country" = 1) %>% 
   mutate(ccode = countrycode::countrycode(country, "country.name", "cown")) %>% 
   filter(ccode %in% ccode.list) %>% 
-  slice(-c(14:16)) %>% 
-  pivot_longer(cols = 2:4,
+  slice(-c(8, 16:18)) %>% 
+  pivot_longer(cols = 2:49,
                values_to = "us_exports_to_partner",
                names_to = "year") %>% 
-  mutate(year = as.numeric(year) + 1)
+  separate(year, into = c("year", "month"), sep = "M") %>% 
+  mutate(year = as.numeric(year),
+         month = as.numeric(month),
+         date = glue::glue("{year}","-","{month}","-","1"),
+         date = as.Date(date, "%Y-%m-%d"),
+         trade.2018 = case_when(
+           date < "2018-09-01" & date >= "2017-09-01" ~ us_exports_to_partner,
+         ),
+         trade.2019 = case_when(
+           date < "2019-07-01" & date >= "2018-07-01" ~ us_exports_to_partner,
+         ),
+         trade.2020 = case_when(
+           date < "2020-04-01" & date >= "2019-04-01" ~ us_exports_to_partner,
+         )) %>% 
+  group_by(country, ccode) %>% 
+  dplyr::summarise(trade.2018 = sum(trade.2018, na.rm = TRUE),
+                   trade.2019 = sum(trade.2019, na.rm = TRUE),
+                   trade.2020 = sum(trade.2020, na.rm = TRUE)) %>% 
+  pivot_longer(cols = starts_with("trade"),
+               values_to = "us_exports_to_partner",
+               names_to = "year") %>% 
+  mutate(year = case_when(
+    year == "trade.2018" ~ 2018,
+    year == "trade.2019" ~ 2019,
+    year == "trade.2020" ~ 2020
+  ))
 
 
 
 imf.imp.long <- imf.imp %>% 
-  dplyr::rename(country = 1) %>% 
+  dplyr::rename("country" = 1) %>% 
   mutate(ccode = countrycode::countrycode(country, "country.name", "cown")) %>% 
   filter(ccode %in% ccode.list) %>% 
-  slice(-c(14:16)) %>% 
-  pivot_longer(cols = 2:4,
+  slice(-c(8, 16:18)) %>% 
+  pivot_longer(cols = 2:49,
                values_to = "us_imports_from_partner",
                names_to = "year") %>% 
-  mutate(year = as.numeric(year) + 1)
+  separate(year, into = c("year", "month"), sep = "M") %>% 
+  mutate(year = as.numeric(year),
+         month = as.numeric(month),
+         date = glue::glue("{year}","-","{month}","-","1"),
+         date = as.Date(date, "%Y-%m-%d"),
+         trade.2018 = case_when(
+           date < "2018-09-01" & date >= "2017-09-01" ~ us_imports_from_partner,
+         ),
+         trade.2019 = case_when(
+           date < "2019-07-01" & date >= "2018-07-01" ~ us_imports_from_partner,
+         ),
+         trade.2020 = case_when(
+           date < "2020-04-01" & date >= "2019-04-01" ~ us_imports_from_partner,
+         )) %>% 
+  group_by(country, ccode) %>% 
+  dplyr::summarise(trade.2018 = sum(trade.2018, na.rm = TRUE),
+                   trade.2019 = sum(trade.2019, na.rm = TRUE),
+                   trade.2020 = sum(trade.2020, na.rm = TRUE)) %>% 
+  pivot_longer(cols = starts_with("trade"),
+               values_to = "us_imports_from_partner",
+               names_to = "year") %>% 
+  mutate(year = case_when(
+    year == "trade.2018" ~ 2018,
+    year == "trade.2019" ~ 2019,
+    year == "trade.2020" ~ 2020
+  ))
+
 
 
 # Merge IMF Trade data and condense to average quarterly values
 imf.combined <- imf.exp.long %>% 
-  left_join(imf.imp.long) 
+  left_join(imf.imp.long) %>% 
+  mutate(total_trade = us_exports_to_partner + us_imports_from_partner)
 
 
 
