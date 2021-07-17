@@ -22,13 +22,6 @@ library(tidyquant)
 library(modelr)
 library(cshapes)
 library(countrycode)
-library(dagitty)
-library(ggdag)
-library(arm)
-library(brms)
-library(rstan)
-library(parallel)
-library(tidybayes)
 library(rmapshaper)
 library(maptools)
 library(GADMTools)
@@ -37,17 +30,8 @@ library(sp)
 library(troopdata)
 library(peacesciencer)
 library(raster)
-library(ggdist)
-library(kableExtra)
-library(BayesPostEst)
-library(texreg)
-library(ggExtra)
-library(ggmcmc)
-library(ggpubr)
 library(here)
-library(arm)
 library(tictoc)
-library(cmdstanr)
 
 #install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
 #cmdstanr::install_cmdstan()
@@ -67,7 +51,7 @@ This file contains all of the script necessary to load and clean the raw data, t
 
 Notes:
 
-1. We use the 2017, 2018, and 2019 values for trade, GDP, population, and V-Dem scores. Will update this once newest data become available. 
+1. We use the 2018, 2019, and 2020 values for trade, GDP, population, and V-Dem scores. Updated on 2021-07-17. 
 
 
 ## Public opinion data setup
@@ -583,7 +567,7 @@ imf.combined <- imf.exp.long %>%
 
 
 
-# V-Dem Data
+#### V-Dem Data ####
 vdem.data <- read_csv(here::here("Raw Data", "V-Dem-CY-Core-v11.1.csv")) %>% 
   dplyr::select("country_name", "year", "v2x_polyarchy", "v2x_libdem", "COWcode") %>% 
   filter(year >= 2018) %>% 
@@ -593,22 +577,7 @@ vdem.data <- read_csv(here::here("Raw Data", "V-Dem-CY-Core-v11.1.csv")) %>%
 
 
 
-# Penn world tables data
-# Includes total population, real gdp per capita 2011 USD, and human capital index
-# Note that PWT data don't include South Vietnam (CCODE 817) which screws up troop levels since 
-# Highest troop values are in South Vietnam in 1960s. This screws up spatial troop values, too.
-# Uses national accounts for gdp values
-pwt.data <- readxl::read_xlsx(here("Raw Data", "pwt91.xlsx"), sheet = 3) %>%
-  mutate(ccode = countrycode(country, "country.name", "cown")) %>% 
-  dplyr::select("ccode", "year", "pop", "rgdpna") %>% 
-  mutate(rgdpna = rgdpna * 1000000) %>% # Match scaling
-  dplyr::rename("realgdp_merge" = "rgdpna") %>% 
-  filter(year >= 2018) %>% 
-  filter(ccode %in% ccode.list) 
-
-
-
-# World Bank Population and GDP data
+#### World Bank Population and GDP data ####
 wdi.data <- wbstats::wb_data(country = "countries_only",
                      indicator = c("pop" = "SP.POP.TOTL", "gdp" = "NY.GDP.MKTP.KD"),
                      start_date = 2018,
@@ -621,7 +590,7 @@ wdi.data <- wbstats::wb_data(country = "countries_only",
 
  
 
-# Troop deployment data
+#### Troop deployment data ####
 troops.com <- get_troopdata(host = as.numeric(ccode.list), startyear = 2018, endyear = 2020)
 
 
