@@ -603,27 +603,22 @@ pwt.data <- readxl::read_xlsx(here("Raw Data", "pwt91.xlsx"), sheet = 3) %>%
   dplyr::select("ccode", "year", "pop", "rgdpna") %>% 
   mutate(rgdpna = rgdpna * 1000000) %>% # Match scaling
   dplyr::rename("realgdp_merge" = "rgdpna") %>% 
-  filter(year >= 2017) %>% 
-  filter(ccode %in% ccode.list) %>% 
-  mutate(year = year + 1)
+  filter(year >= 2018) %>% 
+  filter(ccode %in% ccode.list) 
 
 
 
 # World Bank Population and GDP data
-wdi.data <- wbstats::wb(country = "countries_only",
+wdi.data <- wbstats::wb_data(country = "countries_only",
                      indicator = c("pop" = "SP.POP.TOTL", "gdp" = "NY.GDP.MKTP.KD"),
-                     startdate = 2017,
-                     enddate = 2020) 
-
-wdi.data <- wdi.data %>% 
-  pivot_wider(id_cols = c(country, date),
-              names_from = indicator) %>% 
+                     start_date = 2018,
+                     end_date = 2020,
+                     return_wide = TRUE)  %>% 
   mutate(ccode = countrycode(country, "country.name", "cown")) %>%
-  dplyr::rename("pop" = 3, "gdp" = 4, "year" = "date") %>% 
-  filter(ccode %in% ccode.list) %>% 
-  mutate(year = as.numeric(year) + 1) %>% 
-  filter(year < 2021)
-  
+  dplyr::rename("year" = "date") %>% 
+  filter(ccode %in% ccode.list) 
+
+
 
 # Troops 2018 (includes active duty only)
 troop.data.2018 <- readxl::read_xlsx(here("Raw Data", "DMDC_Website_Location_Report_1809.xlsx"), skip = 60) %>% 
