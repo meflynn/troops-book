@@ -16,6 +16,7 @@ library(tidyverse)
 library(job)
 library(WDI)
 library(readxl)
+library(data.table)
 library(psych)
 library(tidyquant)
 library(modelr)
@@ -583,13 +584,12 @@ imf.combined <- imf.exp.long %>%
 
 
 # V-Dem Data
-vdem.data <- read_csv(here::here("Raw Data", "V-Dem-CY-Core-v10.csv")) %>% 
+vdem.data <- read_csv(here::here("Raw Data", "V-Dem-CY-Core-v11.1.csv")) %>% 
   dplyr::select("country_name", "year", "v2x_polyarchy", "v2x_libdem", "COWcode") %>% 
-  filter(year >= 2017) %>% 
+  filter(year >= 2018) %>% 
   dplyr::rename("ccode" = "COWcode") %>% 
   mutate(ccode = ifelse(ccode == 260, 255, ccode)) %>% 
-  filter(ccode %in% ccode.list) %>% 
-  mutate(year = year + 1)
+  filter(ccode %in% ccode.list)
 
 
 
