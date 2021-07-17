@@ -619,49 +619,10 @@ wdi.data <- wbstats::wb_data(country = "countries_only",
   filter(ccode %in% ccode.list) 
 
 
+ 
 
-# Troops 2018 (includes active duty only)
-troop.data.2018 <- readxl::read_xlsx(here("Raw Data", "DMDC_Website_Location_Report_1809.xlsx"), skip = 60) %>% 
-  slice(1:162) %>% 
-  mutate(UNKNOWN = ifelse(is.na(UNKNOWN), "UNITED STATES", UNKNOWN),
-         ccode = countrycode(UNKNOWN, "country.name", "cown")) %>% 
-  mutate(ccode = ifelse(grepl(".*SERBIA.*", UNKNOWN), 345, ccode)) %>% 
-  filter(!is.na(ccode)) %>% 
-  dplyr::rename("troops" = 8) %>% 
-  mutate(year = 2018) %>% 
-  dplyr::select(ccode, troops, year) %>% 
-  arrange(ccode) %>% 
-  filter(ccode %in% ccode.list)
-
-# Troops 2019 (includes active duty only)
-troop.data.2019 <- readxl::read_xlsx(here("Raw Data", "DMDC_Website_Location_Report_1909.xlsx"), skip = 60) %>% 
-  slice(1:176) %>% 
-  dplyr::rename("country" = `ZZ-UNKNOWN`) %>% 
-  mutate(country = ifelse(is.na(country), "UNITED STATES", country),
-         ccode = countrycode(country, "country.name", "cown")) %>% 
-  mutate(ccode = ifelse(grepl(".*SERBIA.*", country), 345, ccode)) %>% 
-  filter(!is.na(ccode)) %>% 
-  dplyr::rename("troops" = 8) %>% 
-  mutate(year = 2019) %>% 
-  dplyr::select(ccode, troops, year) %>% 
-  arrange(ccode) %>% 
-  filter(ccode %in% ccode.list)
-
-# Troops 2018 (includes active duty only)
-troop.data.2020 <- readxl::read_xlsx(here("Raw Data", "DMDC_Website_Location_Report_2009.xlsx"), skip = 60) %>% 
-  slice(1:176) %>% 
-  dplyr::rename("country" = `UNKNOWN`) %>% 
-  mutate(country = ifelse(is.na(country), "UNITED STATES", country),
-         ccode = countrycode(country, "country.name", "cown")) %>% 
-  mutate(ccode = ifelse(grepl(".*SERBIA.*", country), 345, ccode)) %>% 
-  filter(!is.na(ccode)) %>% 
-  dplyr::rename("troops" = 8) %>% 
-  mutate(year = 2020) %>% 
-  dplyr::select(ccode, troops, year) %>% 
-  arrange(ccode) %>% 
-  filter(ccode %in% ccode.list)
-
-troops.com <- bind_rows(troop.data.2018, troop.data.2019, troop.data.2020)
+# Troop deployment data
+troops.com <- get_troopdata(host = as.numeric(ccode.list), startyear = 2018, endyear = 2020)
 
 
 
