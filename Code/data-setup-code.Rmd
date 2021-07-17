@@ -668,6 +668,7 @@ o.data <- base.data %>%
             list(z = ~arm::rescale(.))) %>% 
   mutate(troops_log = log(troops),
          troops_norm = (troops / max(troops, na.rm = TRUE)),
+         basecount_max = basecount / max(basecount, na.rm = TRUE),
          pop_log = log(pop),
          gdp_log = log(gdp),
          exports_log = log(us_imports_from_partner),
