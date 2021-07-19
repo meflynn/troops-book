@@ -180,15 +180,7 @@ trade.cow.data <- read_csv(here::here("Raw Data/Dyadic_COW_4.0.csv")) %>%
 # Combine trade data for COW and Gleditsch
 trade.com <- trade.cow.data %>% 
   full_join(trade.gled) %>% 
-  mutate(exports_from_ccode1 = case_when(
-    is.na(exports_from_ccode1_cow) ~ exports_from_ccode1_g,
-    TRUE ~ (exports_from_ccode1_cow)
-  ),
-  imports_to_ccode1 = case_when(
-    is.na(imports_to_ccode1_cow) ~ imports_to_ccode1_g,
-    TRUE ~ (imports_to_ccode1_cow)
-  ),
-  across(starts_with("imports|exports"), ~round(.x, digits = 4))) %>% 
+  mutate(across(starts_with("imports|exports"), ~round(.x, digits = 4))) %>% 
   dplyr::rename("ccode" = "ccode2") %>% 
   dplyr::select(-c("ccode1"))
 
@@ -203,7 +195,9 @@ netherlandsfilter <- c("Curaçao, Kingdom of the Netherlands", "Sint Maarten, Ki
 `%notin%` <- Negate(`%in%`) # create this to get rid of lots of duplicate Netherlands values. Appear as a result of protectorates or territories. 
 
 # IMF DOTS Exports to counterpart countries from US
-exports.data <- read_xlsx(here::here("Raw Data", "Exports_and_Imports_by_areas_and_Co (5).xlsx"), sheet = 1, skip = 5)
+# Note that file (5) contains only more recent IMF data for 2014 - 2018.
+# File (6) contains info from 1950 forward.
+exports.data <- read_xlsx(here::here("Raw Data", "Exports_and_Imports_by_areas_and_Co (6).xlsx"), sheet = 1, skip = 5)
 
 exports.data <- exports.data %>% 
   rename("country" = 1) %>% 
@@ -216,13 +210,13 @@ exports.data <- exports.data %>%
          ccode = ifelse(country == "China, P.R.", 710, ccode),
          ccode = ifelse(country == "Central African Rep.", 482, ccode),
          year = as.numeric(year)) %>% 
-  filter(year > 2014) %>% 
+#  filter(year > 2014) %>% 
   rename("exports_from_ccode1_imf" = "exports") %>% 
   dplyr::select("ccode", "year", "exports_from_ccode1_imf")
 
 
 # IMF DOTS Imports from counterpart countries into US
-imports.data <-read_xlsx(here::here("Raw Data", "Exports_and_Imports_by_areas_and_Co (5).xlsx"), sheet = 2, skip = 5)
+imports.data <-read_xlsx(here::here("Raw Data", "Exports_and_Imports_by_areas_and_Co (6).xlsx"), sheet = 2, skip = 5)
 
 imports.data <- imports.data %>% 
   rename("country" = 1) %>% 
@@ -235,7 +229,7 @@ imports.data <- imports.data %>%
          ccode = ifelse(country == "China, P.R.", 710, ccode),
          ccode = ifelse(country == "Central African Rep.", 482, ccode),
          year = as.numeric(year)) %>% 
-  filter(year > 2014) %>% 
+#  filter(year > 2014) %>% 
   rename("imports_to_ccode1_imf" = "imports") %>% 
   dplyr::select("ccode", "year", "imports_to_ccode1_imf")
 
@@ -246,7 +240,7 @@ imf.combined <- exports.data %>%
 # Combine COW and IMF trade data
 # Combine COW and IMF trade data for US and Russia ####
 trade.data.final <- trade.com %>%
-  bind_rows(imf.combined) %>%
+  full_join(imf.combined) %>%
   filter(!is.na(ccode)) %>%
   arrange(ccode, year) %>% 
   mutate(tick = 1) %>% 
@@ -255,21 +249,22 @@ trade.data.final <- trade.com %>%
   dplyr::arrange(-dups) %>% 
   filter(dups == 1) %>% 
   left_join(cpi, by = "year") %>%
-  mutate(across(starts_with(c("imports", "exports")), .x = .x/cpi),
-         exports_from_us = case_when(
-           !is.na(exports_from_ccode1) ~ exports_from_ccode1,
-           is.na(exports_from_ccode1) ~ exports_from_ccode1_imf
+  mutate(exports_from_us = case_when(
+           !is.na(exports_from_ccode1_imf) ~ exports_from_ccode1_imf,
+           is.na(exports_from_ccode1_imf) ~ exports_from_ccode1_cow,
+           is.na(exports_from_ccode1_cow) ~ exports_from_ccode1_g
          ),
          imports_to_us = case_when(
-           !is.na(imports_to_ccode1) ~ imports_to_ccode1,
-           is.na(imports_to_ccode1) ~ imports_to_ccode1_imf))
+           !is.na(imports_to_ccode1_imf) ~ imports_to_ccode1_imf,
+           is.na(imports_to_ccode1_imf) ~ imports_to_ccode1_cow,
+           is.na(imports_to_ccode1_cow) ~ imports_to_ccode1_g))
 
 # Check trade data comparison
-tradecheck <- ggplot(data = trade.data.final %>% filter(ccode %in% c(20, 200, 210, 325, 390, 220, 255, 356, 710, 732, 740, 900)), aes(x = year)) +
+tradecheck <- ggplot(data = trade.data.final %>% filter(ccode %in% c(20, 200, 210, 211, 212, 325, 390, 220, 255, 356, 640, 645, 710, 732, 740, 900)), aes(x = year)) +
   geom_line(aes(y = exports_from_ccode1_cow, color = "COW"), size = 2) +
   geom_line(aes(y = exports_from_ccode1_g, color = "Gleditsch"), size = 1.2) +
   geom_line(aes(y = exports_from_ccode1_imf, color = "IMF"), size = 1.2) +
-  geom_line(aes(y = exports_from_us, color = "Selected"), size = 1.2) +
+  geom_line(aes(y = exports_from_us, color = "Selected"), size = 4, alpha = 0.7) +
   facet_wrap(. ~ ccode) +
   scale_x_continuous(breaks = seq(1950, 2020, 10))
 
