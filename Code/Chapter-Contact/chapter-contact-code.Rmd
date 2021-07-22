@@ -9,6 +9,7 @@ bibliography: "/Chapters/one.bib"
 editor_options: 
   markdown: 
     wrap: 72
+  chunk_output_type: console
 ---
 
 # Front Matter
@@ -17,8 +18,12 @@ This section loads the data files and libraries. Assembles the main data
 
 ```{r setup , echo = FALSE, include = FALSE}
 
+#devtools::install_github("lindeloev/job")
+
 library(tidyverse)
 library(tidyr)
+library(data.table)
+library(job)
 library(broom)
 library(broom.mixed)
 library(psych)
@@ -28,6 +33,9 @@ library(cshapes)
 library(countrycode)
 library(dagitty)
 library(ggdag)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
 library(arm)
 library(brms)
 library(rstan)
@@ -46,6 +54,7 @@ library(kableExtra)
 library(ggExtra)
 library(ggmcmc)
 library(ggpubr)
+library(ggtext)
 library(patchwork)
 library(here)
 library(arm)
@@ -56,17 +65,25 @@ library(remotes)
 
 #devtools::install_github('tidyss/rroughviz')
 #devtools::install_github("xvrdm/ggrough")
-library(ggrough)
-library(rroughviz)
+#library(ggrough)
+#library(rroughviz)
 
-theme_flynn <- theme_linedraw() + theme(text = element_text(size = 11),
-                                        plot.title = element_text(face = "bold", size = 14),
-                                        plot.subtitle = element_text(size = 12),
-                                        plot.caption = element_text(face = "italic", size = 8),
-                                        strip.background = element_rect(fill = "gray80", color = "black"),
-                                        strip.text = element_text(color = "black", face = "bold"),
-                                        panel.grid.major = element_line(color = "gray60", size = 0.15),
-                                        panel.grid.minor = element_line(color = "gray90", size = 0.1))
+theme_flynn <- function(){ 
+  
+      theme_minimal(base_size = 12, base_family = "Arial") %+replace% 
+        
+        theme(plot.title = element_markdown(face = "bold", size = 18, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
+              plot.subtitle = element_markdown(size = 12),
+              plot.caption = element_markdown(face = "italic", size = 8),
+              strip.background = element_rect(fill = "gray80", color = "black"),
+              strip.text = element_markdown(color = "black", face = "bold", margin = margin(t = 0.2, b = 0.2, l = 0.2, r = 0.2, unit = "cm")),
+              panel.grid.major = element_line(color = "gray70", size = 0.15),
+              panel.grid.minor = element_line(color = "gray90", size = 0.1),
+              axis.title = element_markdown(face = "bold", size = 12),
+              axis.title.y = element_markdown(angle = 90, margin = margin(t = 0, r = 0.5, b = 0, l = 0, unit = "cm")),
+              axis.title.x = element_markdown(margin = margin(t = 0.5, r = 0, b = 0, l = 0, unit = "cm")),
+              legend.title = element_markdown(face = "bold", hjust = 0))
+  }
 
 
 ccode.list <- c("200", "210", "211", "230", "235", "255", "290", "325", "640", "690", "732", "740", "840", "900")
@@ -76,14 +93,138 @@ load(here::here("Data/General", "opinion.data.RData"))
 
 
 
-
 ```
 
 
 
 # Descriptive Figures
 
-```{r descriptive figures}
+```{r descriptive figures, dpi = 400, fig.height=5, fig.width=8}
+
+#### Map of survey firm coverage ####
+
+ccode.list.q <- c("210", "211", "230", "235", "290", "640", "840", "900")
+ccode.list.s <- c("200", "255", "290", "325", "690", "732", "740")
+
+
+world <- ne_countries(scale = "medium", returnclass = "sf") %>% 
+  filter(name != "Antarctica")
+
+qualtrics <- ne_countries(scale = "medium", returnclass = "sf") %>% 
+  mutate(ccode = countrycode(name, "country.name", "cown")) %>% 
+  filter(ccode %in% as.numeric(ccode.list.q))
+
+schlesinger <- ne_countries(scale = "medium", returnclass = "sf") %>% 
+  mutate(ccode = countrycode(name, "country.name", "cown")) %>% 
+  filter(ccode %in% as.numeric(ccode.list.s))
+
+map.survey <- ggplot() +
+  geom_sf(data = world, color = "gray90", fill = "gray90") +
+  geom_sf(data = qualtrics, color = "black",  aes(fill = "Qualtrics"), size = 0.1) +
+  geom_sf(data = schlesinger, color = "black", aes( fill = "Schlesinger"), size = 0.1) +
+  theme_void() +
+  theme(legend.position = "bottom",
+        legend.title = element_text(face = "bold")) +
+  scale_x_continuous(expand = c(0, 0)) +
+  viridis::scale_fill_viridis(discrete = TRUE, begin = 0.1, end = 0.65, option = "viridis") +
+  coord_sf(crs = st_crs("ESRI:54030"))  +
+  labs(fill = "Survey Firm")
+
+map.survey
+
+ggsave(here::here("Figures/Chapter-Contact/figure-map-survey-firms.png"), width = 8, height = 5)
+
+
+#### View of American Government ####
+
+view.gov <- as.data.table(o.data)[!is.na(country) & !is.na(american_gov), american_gov, country][
+  , .N, by = .(country, american_gov)
+]
+
+ggplot(view.gov, aes(x = N, y = country, fill = american_gov)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", size = 0.1) +
+  scale_x_continuous(labels = percent_format(), expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  viridis::scale_fill_viridis(discrete = TRUE, option = "magma") +
+  theme_flynn() +
+  theme(panel.border = element_blank(),
+        axis.line =  element_blank(),
+        panel.grid.major = element_blank()) +
+  labs(x = "",
+       y = "",
+       title = "Views of the US Government",
+       fill = "Response")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-government.png"))
+
+
+#### Contact/Benefit Breakdown ####
+
+contact.fig <- as.data.table(o.data)[!is.na(country) & !is.na(contact_pers) & !is.na(contact_nonpers) & !is.na(benefit_pers) & !is.na(benefit_nonpers)][
+  , melt(.SD, id.vars = "country", measure.vars =  c("contact_pers", "benefit_pers", "contact_nonpers", "benefit_nonpers"))
+][
+  , .(count = .N), by = c("country", "variable", "value")
+]
+
+contact.fig$variable <- factor(contact.fig$variable, levels = c("contact_pers", "contact_nonpers", "benefit_pers", "benefit_nonpers"), labels = c("Personal Contact", "Network Contact", "Personal Benefit", "Network Benefit"))
+
+
+ggplot(contact.fig, aes(x = count, y = country, fill = value)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", size = 0.1) +
+  facet_wrap( ~ variable, ncol = 4) +
+  scale_x_continuous(labels = percent_format(), expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  viridis::scale_fill_viridis(discrete = TRUE, option = "magma") +
+  theme_flynn() +
+  theme(panel.border = element_blank(),
+        axis.line =  element_blank(),
+        panel.grid.major = element_blank()) +
+  labs(x = "",
+       y = "",
+       title = "",
+       fill = "Response")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-summary.png"))
+
+
+#### Contact and outcome breakdown figure BIG! ####
+
+getmode <- function(x) {
+  uniquex <- unique(x)
+  uniquex[which.max(tabulate(match(x, uniquex)))]
+}
+
+contact.fig.big <- as.data.table(o.data)[!is.na(country)][
+  , melt(.SD, id.vars = c("country", "american_gov", "troops_1", "american_people"), measure.vars =  c("contact_pers", "benefit_pers", "contact_nonpers", "benefit_nonpers"))
+][
+  , melt(.SD, id.vars = c("country", "variable", "value"), measure.vars = c("troops_1", "american_gov", "american_people"))
+][
+  , .(mode = getmode(value.1)), by = c("country", "variable", "variable.1", "value")
+][
+  variable != "Don't know/decline to answer" & value != "Don't know/decline to answer"
+]
+
+contact.fig.big$variable <- factor(contact.fig.big$variable, levels = c("contact_pers", "contact_nonpers", "benefit_pers", "benefit_nonpers"), labels = c("Personal Contact", "Network Contact", "Personal Benefit", "Network Benefit"))
+
+contact.fig.big$variable.1 <- factor(contact.fig.big$variable.1, levels = c("troops_1", "american_gov", "american_people"), labels = c("Troops", "Government", "People"))
+
+contact.fig.big$mode <- factor(contact.fig.big$mode, levels = c("Don't know/decline to answer", "Very unfavorable", "Somewhat unfavorable", "Neutral", "Somewhat favorable", "Very favorable"))
+
+ggplot(contact.fig.big, aes(x = value, y = country, fill = mode)) +
+  geom_tile(color = "black", size = 0.1) +
+  facet_grid(variable.1 ~ variable) +
+  theme_flynn() +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  viridis::scale_fill_viridis(discrete = TRUE, option = "magma") +
+  theme(panel.border = element_blank(),
+        axis.line =  element_blank(),
+        panel.grid.major = element_blank()) +
+  labs(x = "Contact or Benefit?",
+       y = "",
+       fill = "Modal Response")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-group-summary-big.png"))
 
 
 ```
@@ -91,7 +232,11 @@ load(here::here("Data/General", "opinion.data.RData"))
 
 # Models
 
-```{r set priors}
+## Priors
+
+We use the APSR paper models to generate the priors on the betas here. 
+
+```{r priors}
 
 PRIOR.LIST.T <- get_prior(troops_1_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + contact_pers + benefit_pers +  relig + troops_crime_pers +  american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
             (1 |r| country),
@@ -131,14 +276,14 @@ PRIOR.T[is.na(PRIOR.T)] <- ""
 
 
 # Government Priors
-PRIOR.G <- set_prior("student_t(1, 0, 2)", class = "b")
+PRIOR.G <- empty_prior()
 
 coeflist <- as_tibble(apsr.g) %>% 
   dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
   pivot_longer(cols = 1:ncol(.), 
                names_to = c("coef", ".value"),
                names_pattern = "(.+)_(.+$)") %>% 
-  mutate(prior = glue::glue("student_t(1, {round(mean, 2)},{round(sd, 2)})"),
+  mutate(prior = glue::glue("normal({round(mean, 2)},{round(sd, 2)})"),
          dpar = case_when(
            grepl("mupos", coef) ~ "mupos",
            grepl("muneg", coef) ~ "muneg",
@@ -156,7 +301,7 @@ PRIOR.G <- bind_rows(PRIOR.G, coeflist)
 PRIOR.G[is.na(PRIOR.G)] <- ""
 
 
-# Government Priors
+# People Priors
 PRIOR.P <- empty_prior()
 
 coeflist <- as_tibble(apsr.p) %>% 
@@ -183,6 +328,10 @@ PRIOR.P[is.na(PRIOR.P)] <- ""
 
 ```
 
+
+## Models
+
+
 ```{r contact models}
 
 
@@ -202,52 +351,43 @@ CORES <- 4
 CHAINS <- 4
 SEED <- 123
 
-tic()
 #### Troops  ####
 
-
-m.c.t1 <- brm(troops_1_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
-                (1 |r| country),
-                    data = o.data,
-                    prior = PRIOR.T,
-                    iter = ITER,
-                    warmup = WARMUP,
-                    cores = CORES,
-                    chains = CHAINS,
-                    thin = 1,
-                    seed = SEED,
-                    file = here::here("Output/Chapter-Contact/m.c.t1"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.85,
+m.c.t1 <- brm(troops_1_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + (1 |r| country),
+              family = categorical(link = "logit", refcat = "neutral"),
+              data = o.data,
+              prior = PRIOR.T,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              thin = 1,
+              seed = SEED,
+              control = list(adapt_delta = 0.85,
                                           max_treedepth = 13),
-            backend = "cmdstanr")
+              backend = "cmdstanr",
+              file_refit = "on_change",
+              file = here::here("Output/Chapter-Contact/m.c.t1"))
 
 
-toc()
-
-tic()
 
 #### People ####
-m.c.p1 <- brm(american_p_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
-                (1 |r| country),
-                    data = o.data,
-                    prior = PRIOR.P,
-                    iter = ITER,
-                    warmup = WARMUP,
-                    cores = CORES,
-                    chains = CHAINS,
-                    thin = 1,
-                    seed = SEED,
-                    file = here::here("Output/Chapter-Minority/m.c.p1"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.80,
+m.c.p1 <- brm(american_p_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + (1 |r| country),
+              family = categorical(link = "logit", refcat = "neutral"),
+              data = o.data,
+              prior = PRIOR.P,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              thin = 1,
+              seed = SEED,
+              control = list(adapt_delta = 0.80,
                                           max_treedepth = 12),
-            backend = "cmdstanr")
+              backend = "cmdstanr",
+              file = here::here("Output/Chapter-Minority/m.c.p1"))
 
-toc()
 
-
-tic()
 
 #### Government ####
 m.c.g1 <- brm(american_g_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 

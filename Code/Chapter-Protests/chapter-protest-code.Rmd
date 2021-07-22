@@ -17,8 +17,11 @@ This section loads the data files and libraries. Assembles the main data
 
 ```{r setup , echo = FALSE, include = FALSE}
 
+#devtools::install_github("lindeloev/job")
+
 library(tidyverse)
 library(tidyr)
+library(job)
 library(broom)
 library(broom.mixed)
 library(psych)
@@ -64,14 +67,23 @@ library(rroughviz)
 # Test
 library(modelsummary)
 
-theme_flynn <- theme_linedraw() + theme(text = element_text(size = 11),
-                                        plot.title = element_text(face = "bold", size = 14),
-                                        plot.subtitle = element_text(size = 12),
-                                        plot.caption = element_text(face = "italic", size = 8),
-                                        strip.background = element_rect(fill = "gray80", color = "black"),
-                                        strip.text = element_text(color = "black", face = "bold"),
-                                        panel.grid.major = element_line(color = "gray70", size = 0.15),
-                                        panel.grid.minor = element_line(color = "gray90", size = 0.1))
+theme_flynn <- function(){ 
+  
+      theme_minimal(base_size = 12, base_family = "Arial") %+replace% 
+        
+        theme(plot.title = element_markdown(face = "bold", size = 16),
+              plot.subtitle = element_markdown(size = 12),
+              plot.caption = element_markdown(face = "italic", size = 8),
+              strip.background = element_rect(fill = "gray80", color = "black"),
+              strip.text = element_markdown(color = "black", face = "bold"),
+              panel.grid.major = element_line(color = "gray70", size = 0.15),
+              panel.grid.minor = element_line(color = "gray90", size = 0.1),
+              axis.title = element_markdown(face = "bold", size = 12),
+              axis.title.y = element_markdown(angle = 90, margin = margin(t = 0, r = 0.5, b = 0, l = 0, unit = "cm")),
+              axis.title.x = element_markdown(margin = margin(t = 0.5, r = 0, b = 0, l = 0, unit = "cm")),
+              legend.title = element_markdown(face = "bold"))
+  }
+
 
 
 p.data <- read_csv(here::here("Data/Chapter-Protests", "protest-data-final.csv")) %>% 
@@ -181,7 +193,7 @@ mil.hist <- ggplot(data = p.data %>% filter(!is.na(anti_us_mil)), aes(x = anti_u
 protest.hist <- wrap_plots(us.hist, mil.hist, ncol = 1) +
   plot_layout(guides = "collect") &
   plot_annotation(title = "Protest event counts, 1990-2018") &
-  theme_flynn &
+  theme_flynn() &
   theme(plot.title = element_text(size = 14))
   
 ggsave(here("Figures/chapter-Protests/fig-histogram-protests.png"), width = 8, height = 5, units = "in")
@@ -751,7 +763,7 @@ ggplot(ate.fig.com, aes(x = .value, y = .variable, group = iptw)) +
                         slab_color = iptw)) +
   geom_vline(xintercept = 0) +
   facet_wrap(. ~ group, ncol = 1) +
-  theme_flynn +
+  theme_flynn() +
   theme(axis.ticks.y = element_blank()) +
   guides(interval_color = FALSE,
          interval_fill = FALSE,
@@ -1063,7 +1075,7 @@ ggplot(coefplot.combined, aes(x = .value, y = .variable, color = group, group = 
   ggdist::stat_pointinterval(.width = c(0.50, 0.80, 0.95), position = position_dodge(width = 0.7)) +
   geom_vline(xintercept = 0, width = 1, color = "red") +
   scale_color_brewer(palette = "Set2") +
-  theme_flynn +
+  theme_flynn() +
   labs(x = "Coefficient Estimate",
        y = "",
        color = "Model")
@@ -2950,7 +2962,7 @@ ggplot(sep.plot.com, aes(x = index, y = Estimate)) +
             scale_fill_manual(values = c("red", "dodgerblue1"), guide = FALSE) +
             scale_alpha_discrete(range = c(0.1, 1)) +
             guides(alpha = FALSE) +
-            theme_flynn +
+            theme_flynn() +
             theme(axis.text.x = element_blank(),
                   axis.ticks.x = element_blank(),
                   axis.title.y = element_text(vjust = 3),
@@ -3011,7 +3023,7 @@ protest.ppcheck.fig <- protest.ppcheck.fig +
   scale_y_continuous(limits = c(0, 140)) &
   labs(fill = "Simulated Values",
        color = "Observed Proportion") &
-  theme_flynn &
+  theme_flynn() &
   theme(plot.title = element_text(size = 10))
 
 protest.ppcheck.fig
@@ -3101,7 +3113,7 @@ m.pops <- bind_rows(m2.fig, m3.fig, m4.fig, m5.fig) %>%
 population.figures <- ggplot(m.pops, aes(x = .value, y = .variable, color = model)) +
   stat_pointinterval(.width = c(0.50, 0.80, 0.95), position = position_dodge(width = 0.35)) +
   geom_vline(xintercept = 0, color = "red", width = 1) +
-  theme_flynn +
+  theme_flynn() +
   theme(plot.title.position = "plot") +
   scale_color_brewer(palette = "Set2") +
   labs(x = "Coefficient Value",
@@ -3116,7 +3128,7 @@ population.figures
 country.figures <- ggplot(m5.combined, aes(x = value, y = country, color = var)) +
   stat_pointinterval(stat = median_hdi, .width = c(0.50, 0.80, 0.95), position = position_dodge(width = 0.85)) +
   geom_vline(xintercept = 0, color = "red", width = 1) +
-  theme_flynn +
+  theme_flynn() +
   theme(plot.title.position = "plot") +
   scale_color_brewer(palette = "Set2") +
   labs(color = "Variable",
@@ -3471,7 +3483,7 @@ roc.plot <- ggplot(results.df, aes(x = 1- Specificity, y = Sensitivity, color = 
   scale_x_continuous(expand = c(0, 0), labels = percent_format()) +
   scale_y_continuous(expand = c(0, 0), labels = percent_format()) +
   scale_color_brewer(palette = "Set2") +
-  theme_flynn +
+  theme_flynn() +
   labs(x = "False Positive Rate",
        y = "True Positive Rate",
        title = "ROC plot for individual protest models")
@@ -3489,7 +3501,7 @@ ggplot(results.df) +
   facet_wrap(. ~ Model, ncol = 2) +
   scale_y_continuous(breaks = seq(0, 1, 0.20), labels = percent_format()) +
   scale_color_brewer(palette = "Set2") +
-  theme_flynn +
+  theme_flynn() +
   labs(x = "Probability threshold",
        y = "Percent",
        color = "Statistic")
