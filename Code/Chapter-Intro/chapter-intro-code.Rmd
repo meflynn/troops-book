@@ -55,18 +55,49 @@ library(performance)
 library(ROCR)
 library(tictoc)
 library(remotes)
+library(sf)
+library(rnaturalearth)
+library(rworldmap)
+
+# Regular plot theme
+theme_flynn <- function(){ 
+  
+      theme_minimal(base_size = 12, base_family = "Arial") %+replace% 
+        
+        theme(plot.title = element_markdown(face = "bold", size = 18, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
+              plot.subtitle = element_markdown(size = 12),
+              plot.caption = element_markdown(face = "italic", size = 8),
+              strip.background = element_rect(fill = "gray80", color = "black"),
+              strip.text = element_markdown(color = "black", face = "bold", margin = margin(t = 0.2, b = 0.2, l = 0.2, r = 0.2, unit = "cm")),
+              panel.grid.major = element_line(color = "gray70", size = 0.15),
+              panel.grid.minor = element_line(color = "gray90", size = 0.1),
+              axis.title = element_markdown(face = "bold", size = 12),
+              axis.title.y = element_markdown(angle = 90, margin = margin(t = 0, r = 0.5, b = 0, l = 0, unit = "cm")),
+              axis.title.x = element_markdown(margin = margin(t = 0.5, r = 0, b = 0, l = 0, unit = "cm")),
+              legend.title = element_markdown(face = "bold", hjust = 0))
+  }
 
 
-
-theme_flynn <- theme_linedraw() + theme(text = element_text(size = 11),
-                                        plot.title = element_text(face = "bold", size = 14),
-                                        plot.subtitle = element_text(size = 12),
-                                        plot.caption = element_text(face = "italic", size = 8),
-                                        strip.background = element_rect(fill = "gray80", color = "black"),
-                                        strip.text = element_text(color = "black", face = "bold"),
-                                        panel.grid.major = element_line(color = "gray70", size = 0.15),
-                                        panel.grid.minor = element_line(color = "gray90", size = 0.1))
-
+# Map version of theme
+theme_flynn_map <- function(){
+  
+  theme_void(base_size = 12, base_family = "Arial") %+replace% 
+    
+    theme(plot.title = element_text(face = "bold", size = 18, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
+          plot.subtitle = element_text(size = 12, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
+          plot.caption = element_text(face = "italic", size = 8, hjust = 1, margin = margin(t = 0.2, unit = "cm")),
+          strip.background = element_rect(fill = "gray80", color = "black"),
+          strip.text = element_text(color = "black", face = "bold"),
+          panel.grid.major = element_line(color = "white", size = 0),
+          panel.grid.minor = element_line(color = "white", size = 0),
+          #axis.title = element_text(face = "bold", size = 0),
+          #axis.title.y = element_text(margin = margin(t = 0, r = 0.5, b = 0, l = 0, unit = "cm")),
+          #axis.title.x = element_text(margin = margin(t = 0.5, r = 0, b = 0, l = 0, unit = "cm")),
+          legend.title = element_text(face = "bold"),
+          legend.position = "bottom",
+          legend.key.height = unit(0.6, "cm"),
+          legend.key.width = unit(2.5, "cm"))
+}
 
 
 # Set Seed
@@ -82,26 +113,24 @@ set.seed(seed = SEED)
 ```{r maps of deployments in 1950}
 
 
-troop.data <- readstata13::read.dta13(here("Raw Data/troops 1950-2020.dta")) %>% 
-  filter(year == 1950) %>% 
-  filter(ccode != 2)
+troop.data <- troopdata::get_troopdata(startyear = 1950, endyear = 1950) %>% 
+  filter(ccode != 2) %>% 
+  mutate(ccode = ifelse(ccode == 260, 255, ccode))
 
 
-map.base <- map_data("world")
+map.base <- rnaturalearth::ne_countries(returnclass = "sf")
 
-map.1950 <- cshp(date = as.Date("1950-01-01")) 
-
-map.1950.df <- tidy(map.1950, region = "COWCODE") %>% 
-  mutate(country = countrycode(id, "cown", "country.name"),
-         id = as.numeric(id)) %>% 
-  left_join(troop.data, by = c("id" = "ccode"))
+map.1950 <- cshp(date = as.Date("1950-01-01")) %>%  
+  dplyr::mutate(., ccode = countrycode::countrycode(gwcode, "gwn", "cown")) %>% 
+  left_join(troop.data, by = "ccode")
 
 
 ggplot() +
-  geom_polygon(data = map.base, aes(x = long, y = lat, group = group), fill = "gray90") +
-  geom_polygon(data = map.1950.df, aes(x = long, y = lat, group = group, fill = troops), color = "white", size = 0.1) +
-  theme_void() +
-  scale_fill_distiller(palette = "BuPu", direction = 1, na.value = "gray90", breaks = c(0, 20, 200, 2000, 20000, 200000), limits = c(0, 200000), trans = "log1p", label = comma_format()) +
+  geom_sf(data = map.base, aes(geometry = geometry), fill = "gray90", color = "gray90", size = 0.1) +
+  geom_sf(data = map.1950, aes(geometry = geometry, fill = troops), color = "white", size = 0.1) +
+  theme_flynn_map() +
+  viridis::scale_fill_viridis(option = "magma", direction = 1, begin = 0.1, end = 0.9, na.value = "gray90", breaks = c(0, 20, 200, 2000, 20000, 200000), limits = c(0, 200000), trans = "log1p", label = comma_format()) +
+  coord_sf(crs = st_crs("ESRI:54030")) +
   labs(fill = "Deployment\nSize")
 
 ggsave(here("Figures/Chapter-Intro/figure-map-troops-1950.png"), width = 8, height = 5, units = "in")
@@ -114,25 +143,24 @@ ggsave(here("Figures/Chapter-Intro/figure-map-troops-1950.png"), width = 8, heig
 ```{r maps of deployments in 2020}
 
 
-troop.data <- readstata13::read.dta13(here("Raw Data/troops 1950-2020.dta")) %>% 
-  filter(year == 2020 & ccode != 2)
+troop.data <- troopdata::get_troopdata(startyear = 2020, endyear = 2020) %>% 
+  filter(ccode != 2) %>% 
+  mutate(ccode = ifelse(ccode == 260, 255, ccode))
 
 
-map.base <- map_data("world")
+map.base <- rnaturalearth::ne_countries(returnclass = "sf")
 
-map.2000 <- cshp(date = as.Date("2016-01-01")) 
-
-map.2000.df <- tidy(map.2000, region = "COWCODE") %>% 
-  mutate(country = countrycode(id, "cown", "country.name"),
-         id = as.numeric(id)) %>% 
-  left_join(troop.data, by = c("id" = "ccode"))
+map.2020 <- cshapes::cshp(date = as.Date("2019-01-01")) %>%  
+  dplyr::mutate(., ccode = countrycode::countrycode(gwcode, "gwn", "cown")) %>% 
+  left_join(troop.data, by = "ccode")
 
 
 ggplot() +
-  geom_polygon(data = map.base, aes(x = long, y = lat, group = group), fill = "gray90") +
-  geom_polygon(data = map.2000.df, aes(x = long, y = lat, group = group, fill = troops), color = "white", size = 0.1) +
-  theme_void() +
-  scale_fill_distiller(palette = "BuPu", direction = 1, na.value = "gray90", breaks = c(0, 20, 200, 2000, 20000, 200000), limits = c(0, 200000), trans = "log1p", label = comma_format()) +
+  geom_sf(data = map.base, aes(geometry = geometry), fill = "gray90", color = "gray90", size = 0.1) +
+  geom_sf(data = map.2020, aes(geometry = geometry, fill = troops), color = "white", size = 0.1) +
+  theme_flynn_map() +
+  viridis::scale_fill_viridis(option = "magma", direction = 1, begin = 0.1, end = 0.9, na.value = "gray90", breaks = c(0, 20, 200, 2000, 20000, 200000), limits = c(0, 200000), trans = "log1p", label = comma_format()) +
+  coord_sf(crs = st_crs("ESRI:54030")) +
   labs(fill = "Deployment\nSize")
 
 ggsave(here("Figures/Chapter-Intro/figure-map-troops-2020.png"), width = 8, height = 5, units = "in")

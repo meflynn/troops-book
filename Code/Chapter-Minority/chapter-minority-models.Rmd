@@ -1827,7 +1827,7 @@ panel.1 <- modelsummary_wide(mod.list,
                   stars = FALSE,
                   longtable = TRUE,
                   output = "latex",
-                  caption = "Bayesian multilevel multinomial logistic regressions \\label{tab:minorityfull}",) %>% 
+                  caption = "Bayesian multilevel multinomial logistic regressions \\label{tab:minorityfull}") %>% 
   kable_styling(latex_options = c("striped", "scale_down", "repeat_header"), protect_latex = TRUE, font_size = 7, position = "left",
                 stripe_index = c(1:2, 5:6, 9:10, 13:14, 17:18, 21:22, 25:26, 29:30, 33:34, 37:38, 41:42, 45:46, 49:50, 53:54, 57:58, 61:62, 65:66, 69:70)) %>%
   add_header_above(c(" ", "U.S. Troops" = 3, "U.S. People" = 3, "U.S. Government" = 3)) %>% 
