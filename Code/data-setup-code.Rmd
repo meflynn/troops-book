@@ -291,7 +291,8 @@ base.provinces <- bind_rows(final.list) %>%
 ccode.list <- c("200", "210", "211", "230", "235", "255", "290", "325", "640", "690", "732", "740", "840", "900")
 
 # Base Survey Data
-base.data <- fread(here::here("../Book/Raw Data/opinion-data", "data-years-1-2-3-combined-20200820.csv"), sep = "auto") %>% 
+# Note this includes the updated geocoded qualtrics data
+base.data <- fread(here::here("../Book/Raw Data/opinion-data", "data-years-1-2-3-combined-20210223.csv"), sep = "auto") %>% 
   mutate(country = ifelse(country == "Poland, Rep. of", "Poland", country),
            country = ifelse(country == "Korea, Rep. of", "South Korea", country),
            country = ifelse(country == "Netherlands, The", "Netherlands", country),
@@ -595,6 +596,8 @@ wdi.data <- wbstats::wb_data(country = "countries_only",
 troops.com <- get_troopdata(host = as.numeric(ccode.list), startyear = 2018, endyear = 2020)
 
 
+#### Reported Crime Data ####
+crime.events <- fread("../Crime/Data/Handcoded Data/crime 1.0.csv")
 
 # Merge everything together and generate appropriate measures
 o.data <- base.data %>% 

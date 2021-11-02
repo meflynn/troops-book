@@ -1,22 +1,20 @@
-\documentclass[12pt]{book}
-\usepackage{amsmath,amssymb,graphicx,paralist,setspace,amsthm,pdflscape,fancyhdr,fullpage,rotating,tikz,xcolor,float,varwidth,eurosym,caption,booktabs,afterpage,dcolumn,xcolor,colortbl,threeparttable,txfonts,pxfonts}
+\documentclass[11pt]{book}
+\usepackage{amsmath,amssymb,graphicx,paralist,setspace,amsthm,pdflscape,fancyhdr,fullpage,rotating,tikz,xcolor,float,varwidth,eurosym,caption,booktabs,afterpage,dcolumn,xcolor,colortbl,threeparttable,txfonts,pxfonts,siunitx,endnotes,comment,imakeidx} 
 %\usepackage{times}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
 \usepackage{longtable}
 \usepackage{sectsty}
 \usepackage[compact]{titlesec}
-\usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{dcolumn}
 \usepackage{subfigure}
 %\usepackage{harvard}
-\usepackage[]{har2nat}
-\setcitestyle{aysep={}}
-\setcitestyle{notesep={, }}
+%\usepackage[]{har 2nat}
+%\setcitestyle{aysep={}}
+%\setcitestyle{notesep={, }}
 %\citationstyle{dcu}\usepackage{appendix}
-\usepackage[space]{grffile}
-\bibliographystyle{apsr}
+%\bibliographystyle{apsr}
 \usepackage[urlcolor=blue,citecolor=blue,linkcolor=blue,linktocpage=true,backref=true]{hyperref}
 \usepackage{setspace} % load setspace before footmisc
 \usepackage{footmisc}
@@ -27,6 +25,13 @@
 	urlcolor=blue
 }
 
+
+
+\let\footnote=\endnote
+
+\usepackage[style=verbose-ibid,bibstyle=authoryear,backend=bibtex8,babel=other,bibencoding=inputenc,autocite=footnote,notetype=endonly,labeldateparts]{biblatex}
+\addbibresource{one.bib}
+\let\cite=\autocite
 \newtheorem{hyp}{Hypothesis}[chapter]
 \makeatletter
 
@@ -50,25 +55,33 @@
 %\includeonly{Chapter-Intro,Chapter-Minorities,Chapter-Protests}
 
 \usepackage[space]{grffile}
-\graphicspath{{./}{./Data/}{./Tables/}{./Figures/}}
+\graphicspath{{.}{./Figures/}}
 
 \newcommand{\possessivecite}[1]{\citeauthor{#1}'s \citeyear{#1}}
 
+\renewbibmacro{in:}{}
+\DeclareNameAlias{default}{family-given}
+\renewbibmacro*{cite:short}{%
+	\printnames{labelname}%
+	\setunit*{\printdelim{nameyeardelim}}%
+	\iffieldundef{labelyear}
+	{}
+	{\printtext[parens]{\printtext[bibhyperlink]{%
+				\printlabeldateextra}}}}
 
 %\titleformat{\chapter}{\bf\arge}{\thechapter}{1em}{}
 %\titleformat{\section}{\bf\normalsize}{\thesection}{1 em}{}
 \subsubsectionfont{\normalfont\itshape}
 
-
 \pagestyle{empty}
-
+\makeindex 
 %\includeonly{chapter1,chapter2,bibliography}
 %\includeonly{abstract,chapter4}
 
 \begin{document}
 
 \begin{titlepage}
-	\title{Outside the Wire: U.S. Military Deployments and the Diplomacy of Defense \label{cha:min}}
+	\title{Beyond the Wire: U.S. Military Deployments and the Diplomacy of Defense \label{cha:min}}
 	\author{Michael A. Allen\thanks{\textbf{Email:} \href{mailto:michaelaallen@boisestate.edu}{\tt michaelaallen@boisestate.edu}. \textbf{Contact:} Department of Political Science, Boise State University, 1910 University Drive, Boise, ID 83725.}\\
 		Department of Political Science\\
 		Boise State University \\
@@ -100,7 +113,7 @@
 %\include{copyright}
 
 
-\include{Dedication}
+%\include{Dedication}
 \include{Acknowledgments}
 
 \tableofcontents
@@ -124,30 +137,40 @@
 \mainmatter
 
 \include{Chapter-Intro}
+\theendnotes
+\setcounter{endnote}{0}
 \include{Chapter-Theory}
+\theendnotes
+\setcounter{endnote}{0}
 \include{Chapter-Methods-Contact}
-%\setcounter{chapter}{4}
-\include{Chapter-Minorities}
+\theendnotes
+\setcounter{endnote}{0}
 \include{Chapter-Crimes}
-%\setcounter{chapter}{6}
+\theendnotes
+\setcounter{endnote}{0}
+\include{Chapter-Minorities}
+\theendnotes
+\setcounter{endnote}{0}
 \include{Chapter-Protests}
+\theendnotes
+\setcounter{endnote}{0}
 \include{Chapter-Conclusions}
-
-
-%\setcounter{page}{107}
+\theendnotes
+\setcounter{endnote}{0}
 \include{Appendix}
 \backmatter
 \clearpage
 \pagebreak
 
-\addcontentsline{toc}{chapter}{\bibname}
+%\addcontentsline{toc}{chapter}{\bibname}
 
-\bibliography{one}
 
 
 
 \clearpage
 \pagebreak
+\addcontentsline{toc}{section}{Index}
+\printindex
 
 
 \end{document}
