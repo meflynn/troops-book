@@ -57,8 +57,8 @@ library(performance)
 library(tictoc)
 library(remotes)
 
-devtools::install_github('tidyss/rroughviz')
-devtools::install_github("xvrdm/ggrough")
+#devtools::install_github('tidyss/rroughviz')
+#devtools::install_github("xvrdm/ggrough")
 library(ggrough)
 library(rroughviz)
 

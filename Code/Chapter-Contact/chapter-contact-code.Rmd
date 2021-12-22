@@ -67,6 +67,7 @@ library(arm)
 library(performance)
 #library(ROCR)
 library(tictoc)
+library(sysfonts)
 library(remotes)
 library(formattable)
 library(sparkline)
@@ -77,28 +78,42 @@ library(ltxsparklines)
 #library(rroughviz)
 
 
+
+knitr::opts_chunk$set(comment = '', dpi = 400)
+
+sysfonts::font_add_google("Oswald", family = "oswald")
+showtext_auto()
+
+basesize <- 30
 # Regular plot theme
 theme_flynn <- function(){ 
   
-      theme_linedraw(base_size = 12, base_family = "Arial") %+replace% 
+      theme_linedraw(base_size = basesize, base_family = "oswald") %+replace% 
         
-        theme(plot.title = element_markdown(face = "bold", size = 18, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
-              plot.subtitle = element_markdown(size = 12),
-              plot.caption = element_markdown(face = "italic", size = 8),
-              strip.background = element_rect(fill = "gray80", color = "black"),
-              strip.text = element_markdown(color = "black", face = "bold", margin = margin(t = 0.2, b = 0.2, l = 0.2, r = 0.2, unit = "cm")),
+        theme(plot.title = element_text(face = "bold", size = basesize * 1.3, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
+              plot.subtitle = element_text(size = basesize),
+              plot.caption = element_text(face = "italic", size = basesize * 0.6),
+              panel.border = element_rect(fill = NA, size = 0.2),
+              strip.background = element_rect(fill = "gray80", color = "black", size = 0.2),
+              strip.text = element_text(size = basesize, color = "black", face = "bold", margin = margin(t = 0.2, b = 0.2, l = 0.2, r = 0.2, unit = "cm")),
+              panel.background = element_rect(size = 0.2),
               panel.grid.major = element_line(color = "gray70", size = 0.15),
               panel.grid.minor = element_line(color = "gray90", size = 0.1),
-              axis.title = element_markdown(face = "bold", size = 12),
-              axis.title.y = element_markdown(angle = 90, margin = margin(t = 0, r = 0.5, b = 0, l = 0, unit = "cm")),
-              axis.title.x = element_markdown(margin = margin(t = 0.5, r = 0, b = 0, l = 0, unit = "cm")),
-              legend.title = element_markdown(face = "bold", hjust = 0))
+              axis.title = element_text(face = "bold", size = basesize),
+              axis.title.y = element_text(angle = 90, margin = margin(t = 0, r = 0.5, b = 0, l = 0, unit = "cm")),
+              axis.title.x = element_text(margin = margin(t = 0.5, r = 0, b = 0, l = 0, unit = "cm")),
+              axis.ticks = element_line(size = 0.1),
+              axis.ticks.length = unit(0.1, "cm"),
+              legend.title = element_text(size = basesize, face = "bold", hjust = 0, margin = margin(t = 0, b = 0, l = 0, r = 0, unit = "cm")),
+              plot.margin = margin(0.5, 0.5, 0.5, 0.5, unit = "cm"),
+              legend.margin = margin(t=-10, b=0, r=0, l=0),
+              legend.box.margin = margin(-10,-10,-10,-10))
   }
 
 # Map version of theme
 theme_flynn_map <- function(){
   
-  theme_void(base_size = 12, base_family = "Arial") %+replace% 
+  theme_void(base_family = "oswald") %+replace% 
     
     theme(plot.title = element_text(face = "bold", size = 18, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
           plot.subtitle = element_text(size = 12, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
@@ -135,8 +150,11 @@ rstan_options(auto_write = TRUE)
 # Load opinion data for individual-level protest models.
 load(here::here("Data/General", "opinion.data.RData")) 
 
+# This fixes an encoding issue which duplicated the "Other" category unnecessarily. 
+o.data <- setDT(o.data)[
+  , relig := ifelse(grepl("Other", relig), "Other", relig)
+]
 
-knitr::opts_chunk$set(dpi = 400)
 
 set.seed(seed = 66502)
 
@@ -179,9 +197,13 @@ map.survey <- ggplot() +
 
 map.survey
 
-ggsave(here::here("Figures/Chapter-Contact/figure-map-survey-firms.png"), width = 8, height = 5)
+ggsave(here::here("Figures/Chapter-Contact/figure-map-survey-firms.tiff"), width = 8, height = 5)
+ggsave(here::here("Figures/Chapter-Contact/figure-map-survey-firms.jpg"), width = 8, height = 5)
+
+```
 
 
+```{r views-of-us-groups}
 #### View of American Government ####
 
 view.gov <- as.data.table(o.data)[!is.na(country) & !is.na(american_gov), american_gov, country][
@@ -198,13 +220,17 @@ gov.plot <- ggplot(view.gov, aes(x = N, y = country, fill = american_gov)) +
         axis.line =  element_blank(),
         panel.grid.major = element_blank(),
         legend.position = "bottom",
-        plot.margin = margin(l = 0.75, unit = "cm")) +
+        legend.text = element_text(size = basesize*1.1, hjust = 0, margin = margin(l = -0.3, unit = "cm")),
+        plot.margin = margin(0.5, l = 0.1, r = 0.96, 0.5, unit = "cm")) +
   labs(x = "",
        y = "",
        title = "US Government",
        fill = "Response")
 
-ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-government.png"), height = 5, width = 8, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-government.tiff"), height = 5, width = 7, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-government.jpg"), height = 5, width = 7, units = "in")
+
+
 
 #### View of American People ####
 
@@ -222,13 +248,17 @@ people.plot <- ggplot(view.people, aes(x = N, y = country, fill = american_peopl
         axis.line =  element_blank(),
         panel.grid.major = element_blank(),
         legend.position = "bottom",
-        plot.margin = margin(l = 0.75, unit = "cm")) +
+        legend.text = element_text(size = basesize*1.1, hjust = 0, margin = margin(l = -0.3, unit = "cm")),
+        plot.margin = margin(0.5, l = 0.1, r = 0.96, 0.5, unit = "cm")) +
   labs(x = "",
        y = "",
        title = "US People",
        fill = "Response")
 
-ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-people.png"), height = 5, width = 8, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-people.tiff"), height = 5, width = 7, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-people.jpg"), height = 5, width = 7, units = "in")
+
+
 
 
 #### View of American troops ####
@@ -245,15 +275,18 @@ troop.plot <- ggplot(view.troops, aes(x = N, y = country, fill = troops_1)) +
   theme_flynn() +
   theme(panel.border = element_blank(),
         axis.line =  element_blank(),
+        axis.text.y.left = element_text(size = basesize*1.1),
         panel.grid.major = element_blank(),
         legend.position = "bottom",
-        plot.margin = margin(l = 0.75, unit = "cm")) +
+        legend.text = element_text(size = basesize*1.1, hjust = 0, margin = margin(l = -0.3, unit = "cm")),
+        plot.margin = margin(0.5, l = 0.1, r = 0.96, 0.5, unit = "cm")) +
   labs(x = "",
        y = "",
        title = "US Troops",
        fill = "Response")
 
-ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-troops.png"), height = 5, width = 8, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-troops.tiff"), height = 5, width = 7, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-troops.jpg"), height = 5, width = 7, units = "in")
 
 
 #### Combine attitude figures into a single figure ####
@@ -273,8 +306,13 @@ view.com[[3]] <- view.com[[3]] + theme(axis.text.y = element_blank(),
   
 view.com
 
-ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-actors-combined.png"), height = 6, width = 10, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-actors-combined.tiff"), height = 5, width = 9, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-actors-combined.jpg"), height = 5, width = 9, units = "in")
 
+
+```
+
+```{r contact-breakdown}
 
 #### Contact/Benefit Breakdown ####
 
@@ -296,14 +334,21 @@ ggplot(contact.fig, aes(x = count, y = country, fill = value)) +
   theme_flynn() +
   theme(panel.border = element_blank(),
         axis.line =  element_blank(),
+        axis.text.y = element_text(size = basesize * 1.1),
+        axis.text.x = element_text(size = basesize * 1.05),
         panel.grid.major = element_blank(),
-        panel.spacing = unit(1.5, "lines")) +
+        panel.spacing = unit(1.5, "lines"),
+        strip.background = element_rect(size = 0.2),
+        legend.position = "bottom",
+        legend.text = element_text(size = basesize *1.1, margin = margin(l=-0.25, unit = "cm"))) +
+  guides(fill = guide_legend(reverse = TRUE)) +
   labs(x = "",
        y = "",
        title = "",
        fill = "Response")
 
-ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-summary.png"), height = 6, width = 11, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-summary.tiff"), height = 5, width = 10, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-summary.jpg"), height = 5, width = 10, units = "in")
 
 
 #### Contact and outcome breakdown figure BIG! ####
@@ -338,13 +383,19 @@ ggplot(contact.fig.big, aes(x = value, y = country, fill = mode)) +
   viridis::scale_fill_viridis(discrete = TRUE, option = "magma") +
   theme(panel.border = element_blank(),
         axis.line =  element_blank(),
-        panel.grid.major = element_blank()) +
+        axis.text.y = element_text(size = basesize * 1.1),
+        panel.grid.major = element_blank(),
+        strip.background = element_rect(size = 0.2),
+        panel.spacing = unit(0.2, "cm"),
+        legend.title = element_text(size = basesize * 1.15, margin = margin(b = -0.4, unit = "cm")),
+        legend.text = element_text(size = basesize *1.1, margin = margin(l=-0.25, unit = "cm"))) +
   guides(fill = guide_legend(reverse = TRUE)) +
   labs(x = "Contact or Benefit?",
        y = "",
        fill = "Modal Response")
 
-ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-group-summary-big.png"), height = 9, width = 10, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-group-summary-big.tiff"), height = 8, width = 8, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-group-summary-big.jpg"), height = 8, width = 8, units = "in")
 
 
 ```
@@ -394,12 +445,15 @@ com.breakdown <- bind_rows(troops.breakdown, gov.breakdown, people.breakdown) %>
   mutate(assessment = factor(assessment, levels = c("positive", "neutral", "negative"), labels = c("Favorable", "Neutral", "Unfavorable")))
 
 
-ggplot(com.breakdown, aes(x = group, y = value, group = country, fill = country)) +
+ggplot(com.breakdown %>% filter(assessment != "Neutral"), aes(x = group, y = value, group = country, fill = country)) +
   geom_line(aes(color = country), size = 1.5, alpha = 0.7, position = position_dodge(width = .25)) +
   geom_point(size = 5, pch = 21, color = "black", alpha = 1.0, stroke = 1.25, position = position_dodge(width = .25)) +
-  geom_text_repel(data = com.breakdown %>% filter(group == "US Troops"), aes(label = country), hjust = "left", nudge_x = -0.5, nudge_y = 0.05, size = 2.85,  segment.curvature = 1e-20,  min.segment.length = 0.5) +
+  geom_text_repel(data = com.breakdown %>% filter(group == "US Troops" & assessment != "Neutral"), aes(label = country), hjust = "left", nudge_x = -0.5, nudge_y = 0.05, size = 7,  segment.curvature = 1e-20,  min.segment.length = 0.5) +
   theme_flynn() +
-  theme(legend.position = "bottom") +
+  theme(legend.position = "bottom",
+        legend.text = element_text(margin = margin(l = -0.3, unit = "cm")),
+        panel.border = element_rect(size = 0.2),
+        strip.background = element_rect(size = 0.2)) +
   facet_grid(. ~ assessment) +
   scale_y_continuous(labels = percent_format()) +
   scale_x_discrete(expand = c(0.5,0)) +
@@ -410,7 +464,7 @@ ggplot(com.breakdown, aes(x = group, y = value, group = country, fill = country)
        color = "Country",
        fill = "Country")
 
-ggsave(here::here("Figures/Chapter-Contact/figure-contact-favorability-breakdown.png"), height = 7, width = 12, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-favorability-breakdown.tiff"), height = 6, width = 10, units = "in")
   
 ```
 
@@ -441,10 +495,27 @@ We use the APSR paper models to generate the priors on the betas here.
 
 Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
 
-PRIOR.LIST.T <- get_prior(troops_1_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + contact_pers + benefit_pers +  relig + troops_crime_pers +  american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+
+# Get priors
+PRIOR.LIST.T <- get_prior(troops_1_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
             (1 |r| country),
                     data = o.data,
-            family = categorical(link = "logit", refcat = "neutral")) %>% 
+            family = categorical(link = "logit", refcat = "neutral")) 
+
+# Default and regularizing priors
+# Use the same basic data.frame for everything
+PRIOR.LIST.REG <- PRIOR.LIST.T %>% 
+  filter(coef == "") %>% 
+  mutate(prior = case_when(
+    class == "b" ~ "normal(0,2)",
+    class == "sd" ~ "gamma(1, 1)",
+    class == "Intercept" ~ "normal(0,3)",
+    TRUE ~ prior
+  )) 
+
+
+# Informative beta Priors
+PRIOR.LIST.T <- PRIOR.LIST.T %>% 
   filter(class == "b" & !is.na(coef) & coef != "") 
 
 apsr.t <- readRDS(here::here("../Papers/Published/Primary Paper - Contact/Bayes Diagnostics/m1.cat.bayes.rds"))
@@ -472,21 +543,17 @@ coeflist <- as_tibble(apsr.t) %>%
   mutate(coef = gsub("b_", "", coef),
          class = "b") %>% 
   dplyr::select(-c(mean, sd)) %>% 
-  filter(grepl(".*contact.*|.*benefit.*|.*relig.*|.*gender.*|.*age.*|.*inf.*|.*minority.*", coef)) %>% 
+  filter(grepl(".*contact.*|.*benefit.*|.*gender.*|.*inf.*|.*age.*|.*minority.*|.*relig.*", coef)) %>% 
   filter(!grepl(".*minorityNo.*", coef))
 
-PRIOR.T <- bind_rows(PRIOR.T, coeflist) 
+PRIOR.T <- bind_rows(PRIOR.T, coeflist, PRIOR.LIST.REG) 
 PRIOR.T[is.na(PRIOR.T)] <- ""
 
 
 # Government Priors
 PRIOR.G <- empty_prior() 
 
-PRIOR.BASE <- tibble(class = c("b"),
-                     prior = c("normal(0, 4)"))
-  
-
-PRIOR.LIST.G <- get_prior(american_g_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + contact_pers + benefit_pers +  relig + troops_crime_pers +  american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+PRIOR.LIST.G <- get_prior(american_g_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + contact_pers + benefit_pers + troops_crime_pers +  american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
             (1 |r| country),
                     data = o.data,
             family = categorical(link = "logit", refcat = "neutral")) %>% 
@@ -509,10 +576,10 @@ coeflist <- as_tibble(apsr.g) %>%
   mutate(coef = gsub("b_", "", coef),
          class = "b") %>% 
   dplyr::select(-c(mean, sd)) %>% 
-  filter(grepl(".*contact.*|.*benefit.*|.*relig.*|.*gender.*|.*age.*|.*inf.*|.*minority.*", coef)) %>% 
+  filter(grepl(".*contact.*|.*benefit.*|.*gender.*|.*inf.*|.*age.*|.*minority.*|.*relig.*", coef)) %>% 
   filter(!grepl(".*minorityNo.*", coef))
 
-PRIOR.G <- bind_rows(PRIOR.G, PRIOR.BASE, coeflist) 
+PRIOR.G <- bind_rows(PRIOR.G, PRIOR.LIST.REG, coeflist) 
 PRIOR.G[is.na(PRIOR.G)] <- ""
 
 
@@ -520,6 +587,12 @@ PRIOR.G[is.na(PRIOR.G)] <- ""
 
 # People Priors
 PRIOR.P <- empty_prior()
+
+PRIOR.LIST.P <- get_prior(american_p_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + contact_pers + benefit_pers + troops_crime_pers +  american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+            family = categorical(link = "logit", refcat = "neutral")) %>% 
+  filter(class == "b" & !is.na(coef) & coef != "") 
 
 coeflist <- as_tibble(apsr.p) %>% 
   dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
@@ -538,11 +611,12 @@ coeflist <- as_tibble(apsr.p) %>%
   mutate(coef = gsub("b_", "", coef),
          class = "b") %>% 
   dplyr::select(-c(mean, sd)) %>% 
-  filter(grepl(".*contact.*|.*benefit.*|.*relig.*|.*gender.*|.*age.*|.*inf.*|.*minority.*", coef)) %>% 
+  filter(grepl(".*contact.*|.*benefit.*|.*gender.*|.*inf.*|.*age.*|.*minority.*|.*relig.*", coef)) %>% 
   filter(!grepl(".*minorityNo.*", coef))
 
-PRIOR.P <- bind_rows(PRIOR.P, coeflist) 
+PRIOR.P <- bind_rows(PRIOR.P, PRIOR.LIST.REG, coeflist) 
 PRIOR.P[is.na(PRIOR.P)] <- ""
+
 
 ```
 
@@ -557,8 +631,8 @@ job::job(import = "auto", "m.c.t1" = {
 
   Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
 
-ITER <- 5000
-WARMUP <-  2500
+ITER <- 6000
+WARMUP <-  3000
 CORES <- 4
 CHAINS <- 4
 SEED <- 123
@@ -592,8 +666,8 @@ job::job(import = "auto", packages = c("brms", "here"), m.c.p1 = {
 
 Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
 
-ITER <- 5000
-WARMUP <-  2500
+ITER <- 6000
+WARMUP <-  3000
 CORES <- 4
 CHAINS <- 4
 SEED <- 123
@@ -663,9 +737,9 @@ job::job(import = "auto", "m.c.t2" = {
   
   Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
   
-  ITER <- 5000
-  WARMUP <-  2500
-  CORES <- 4
+  ITER <- 6000
+  WARMUP <-  3000
+  CORES <- 8
   CHAINS <- 4
   SEED <- 123
   
@@ -679,8 +753,10 @@ job::job(import = "auto", "m.c.t2" = {
                 warmup = WARMUP,
                 cores = CORES,
                 chains = CHAINS,
+                threads = threading(threads = 2),
                 thin = 1,
                 seed = SEED,
+                refresh = 10,
                 control = list(adapt_delta = 0.80,
                                max_treedepth = 10),
                 backend = "cmdstanr",
@@ -700,7 +776,7 @@ job::job(import = "auto", packages = c("brms", "here"), m.c.p2 = {
   
   ITER <- 5000
   WARMUP <-  2500
-  CORES <- 4
+  CORES <- 8
   CHAINS <- 4
   SEED <- 123
   
@@ -712,8 +788,10 @@ job::job(import = "auto", packages = c("brms", "here"), m.c.p2 = {
                       warmup = WARMUP,
                       cores = CORES,
                       chains = CHAINS,
+                      threads = threading(2),
                       thin = 1,
                       seed = SEED,
+                      refresh = 10,
                       control = list(adapt_delta = 0.80,
                                      max_treedepth = 10),
                       backend = "cmdstanr",
@@ -736,7 +814,7 @@ job::job(import = "auto", m.c.g2 = {
   
   ITER <- 6000
   WARMUP <-  3000
-  CORES <- 4
+  CORES <- 8
   CHAINS <- 4
   SEED <- 123
   
@@ -749,12 +827,16 @@ job::job(import = "auto", m.c.g2 = {
                       warmup = WARMUP,
                       cores = CORES,
                       chains = CHAINS,
+                      threads = threading(threads = 2),
+                      refresh = 10,
                       thin = 1,
                       seed = SEED,
                       control = list(adapt_delta = 0.80,
                                      max_treedepth = 10),
                       backend = "cmdstanr",
                       file_refit = "on_change",
+                      save_pars = save_pars(all = TRUE),
+                      save_model = here::here("Code/Chapter-Contact/m.c.g2.stan"),
                       file = here::here("Output/Chapter-Contact/m.c.g2"))
   
 })
@@ -858,7 +940,7 @@ coef.list <- c("b_mu_contact_persYes" = "Personal Contact: Yes",
                "b_mu_religDeclinetoanswer" = "Religion: Decline to answer",
                "b_mu_ed_z" = "Education",
                "b_mu_ideology_z" = "Ideology",
-               "b_mu_troops_crime_persYes" = "Crime Experience: Yes",
+               "b_mu_troops_crime_persYes" = "Personal Crime Experience: Yes",
                "b_mu_american_inf_1DontknowDdeclinetoanswer" = "Influence 1: DK/Decline",
                "b_mu_american_inf_1Alittle" = "Influence 1: A little",
                "b_mu_american_inf_1Some" = "Influence 1: Some",
@@ -951,7 +1033,7 @@ p1
 
 ### Population Effects 
 
-```{r contact coefficients, dpi=400}
+```{r contact coefficients}
 
 # Read in model files
 m.c.t1 <- readRDS(here::here("Output/Chapter-Contact/m.c.t1.rds"))
@@ -976,19 +1058,7 @@ coef.plot <- lapply(mod.list, function(x) {
                           b_mudk_benefit_persYes,
                           b_mupos_benefit_nonpersYes,
                           b_muneg_benefit_nonpersYes,
-                          b_mudk_benefit_nonpersYes,
-                          b_mupos_contact_persDontknowDdeclinetoanswer,
-                          b_muneg_contact_persDontknowDdeclinetoanswer,
-                          b_mudk_contact_persDontknowDdeclinetoanswer,
-                          b_mupos_contact_nonpersDontknowDdeclinetoanswer,
-                          b_muneg_contact_nonpersDontknowDdeclinetoanswer,
-                          b_mudk_contact_nonpersDontknowDdeclinetoanswer,
-                          b_mupos_benefit_persDontknowDdeclinetoanswer,
-                          b_muneg_benefit_persDontknowDdeclinetoanswer,
-                          b_mudk_benefit_persDontknowDdeclinetoanswer,
-                          b_mupos_benefit_nonpersDontknowDdeclinetoanswer,
-                          b_muneg_benefit_nonpersDontknowDdeclinetoanswer,
-                          b_mudk_benefit_nonpersDontknowDdeclinetoanswer) 
+                          b_mudk_benefit_nonpersYes) 
   
   df %>% 
     dplyr::mutate(dv.response = case_when(
@@ -1025,21 +1095,29 @@ coef.plot <- lapply(mod.list, function(x) {
   )
 
 coef.plot <- rbindlist(coef.plot, idcol = TRUE) %>% 
-  mutate(.id = factor(.id, levels = c("US Troops", "US Government", "US People")))
+  mutate(.id = factor(.id, levels = c("US Troops", "US Government", "US People"))) %>% 
+  filter(iv.response == "Yes")
 
 ggplot(coef.plot, aes(x = .value, y = iv.response, color = dv.response)) +
-  stat_pointinterval(.width = c(0.5, 0.8, 0.95), position = position_dodge(width = 0.60), interval_size_range = c(1, 3, 5), fatten_point = 1.4) +
+  stat_pointinterval(.width = c(0.5, 0.8, 0.95), position = position_dodge(width = 0.60), interval_size_range = c(1, 3, 5), fatten_point = 1.3) +
   geom_vline(xintercept = 0, color = "black", size = 0.75) +
   facet_grid(iv ~ .id) +
   theme_flynn() +
   theme(legend.position = "bottom",
-        panel.spacing = unit(0.25, "line")) +
+        panel.spacing = unit(0.25, "line"),
+        axis.text.x = element_text(size = basesize * 1.1),
+        axis.text.y = element_text(size = basesize * 1.1),
+        axis.title = element_text(size = basesize * 1.1),
+        legend.title = element_text(size = basesize * 1.1),
+        legend.text = element_text(size = basesize * 1.1),
+        strip.text = element_text(size = basesize * 1.1)) +
   scale_color_viridis(discrete = TRUE, begin = 0.1, end = 0.9, option = "magma") +
   labs(x = "Coefficient Estimate",
        y = "Independent Variable Response",
        color = "Assessment of Reference Group")
 
-ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-plot.png"), height = 8, width = 9, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-plot.tiff"),  height = 7, width = 8, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-plot.jpg"),  height = 7, width = 8, units = "in")
 
 ```
 
@@ -1111,64 +1189,97 @@ ggplot(prior.compare) +
        y = "",
        color = "Assessment of Reference Group")
 
-ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-prior-comparison.png"), height = 9, width = 10, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-prior-comparison.tiff"),  height = 9, width = 9, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-prior-comparison.jpg"),  height = 9, width = 9, units = "in")
 
 
 ```
 
-```{r posterior percent}
+```{r posterior percent table}
 
-posterior.table <- coef.plot %>% 
-  dplyr::group_by(.id, id) %>% 
-  dplyr::summarise(median = median(median, na.rm = TRUE),
-                   percent.pos = median(posterior.positive, na.rm = TRUE),
-                   percent.neg = median(posterior.negative, na.rm = TRUE)) %>% 
-  pivot_longer(cols = c(percent.pos, percent.neg)) %>% 
-  separate(id, into = c("iv", "iv.response", "dv.response"), sep = ", ") %>% 
-  dplyr::filter(iv.response == "Yes") %>% 
-  dplyr::filter(dv.response == "Negative" | dv.response == "Positive") %>% 
-  dplyr::mutate(Effect = case_when(
-    median > 0 ~ "Increase",
-    median < 0 ~ "Decrease"
-  ),
-  dv.response = case_when(
-    dv.response == "Positive" ~ "Favorable Attitudes",
-    dv.response == "Negative" ~ "Unfavorable Attitudes"
-  )) %>% 
-  dplyr::filter(Effect == "Increase" & median > 0 & name == "percent.pos" | Effect == "Decrease" & median < 0 & name == "percent.neg") %>% 
-  dplyr::rename("Reference Group" = .id, "in" = dv.response, "Contact Type" = iv, "Suggests an..." = Effect, "Median" = median, "Credibility" = value) %>% 
-  dplyr::select("Reference Group", "Contact Type", "Suggests an...", "in", "Median", "Credibility") %>% 
-  mutate(Median = round(Median, 3),
-         `Contact Type` = factor(`Contact Type`, levels = c("Personal Contact", "Network Contact", "Personal Benefit", "Network Benefit"))) %>% 
-  ungroup() %>% 
+# Read in model files
+m.c.t1 <- readRDS(here::here("Output/Chapter-Contact/m.c.t1.rds"))
+m.c.p1 <- readRDS(here::here("Output/Chapter-Contact/m.c.p1.rds"))
+m.c.g1 <- readRDS(here::here("Output/Chapter-Contact/m.c.g1.rds"))
+
+mod.list <- list("US Troops" = m.c.t1,
+                 "US People" = m.c.p1,
+                 "US Government" = m.c.g1)
+
+
+posterior.table <- lapply(mod.list, function(x) {
+  temp <- parameters::parameters(x) %>% 
+    filter(grepl(".*contact.*|.*benefit.*", Parameter)) %>% 
+    filter(grepl(".*Yes.*", Parameter)) %>% 
+    filter(!grepl(".*dk.*", Parameter)) %>%  # Remove don't know outcomes
+    dplyr::select(Parameter, Median, CI_low, CI_high, pd)
+  
+}
+)
+
+posterior.table.df <- rbindlist(posterior.table, idcol = TRUE) %>% 
+  dplyr::mutate(id = factor(row_number()),
+                `People Who Report` = case_when(
+                  grepl(".*contact_pers.*", Parameter) ~ "Personal Contact",
+                  grepl(".*contact_nonpers.*", Parameter) ~ "Network Contact",
+                  grepl(".*benefit_pers.*", Parameter) ~ "Personal Benefits",
+                  grepl(".*benefit_nonpers.*", Parameter) ~ "Network Benefits"
+                ),
+                `Have a` = case_when(
+                  Median > 0 ~ "Higher Probability of",
+                  Median < 0 ~ "Lower Probability of"
+                ),
+                `Expressing` = case_when(
+                  grepl(".*mupos.*", Parameter) ~ "Favorable Attitudes",
+                  grepl(".*muneg.*", Parameter) ~ "Unfavorable Attitudes",
+                ),
+                Median = sprintf('%.2f', round(Median, 2)),
+                CI_low = sprintf('%.2f', round(CI_low, 2)),
+                CI_high = sprintf('%.2f', round(CI_high, 2)),
+                pd = round(pd, 2),
+                `Interval` = glue::glue("[{CI_low}, {CI_high}]")) %>% 
+  dplyr::rename("Probability" = "pd") %>% 
+  dplyr::select(`Probability`, `People Who Report`, `Have a`, `Expressing`, .id, `Median`, `Interval`) %>% 
   mutate(id = factor(row_number()))
-
-
+  
+# Create figures for sparkplot thing
 for(i in 1:24) {
   
   id <- i
 
-  p <- ggplot(posterior.table %>% filter(id == i), aes(x = Credibility, y = id)) +
-      geom_bar(stat = "identity", fill = "black") +
-      geom_text(aes(label = glue::glue("{Credibility*100}%")), color = "white", hjust = 1, size = 9) +
+  p <- ggplot(posterior.table.df %>% filter(id == i), aes(x = Probability, y = id)) +
+      geom_bar(stat = "identity", fill = "gray30") +
+      geom_text(aes(label = glue::glue("{Probability*100}%")), color = "white", hjust = 1.3, size = 18) +
+    geom_vline(xintercept = 0, size = 1.5) +
+    geom_vline(xintercept = 1, size = 1.5) +
       scale_x_continuous(limits = c(0, 1), expand = c(0, 0)) +
-      theme_void()
-    ggsave(p, filename = glue::glue("sparkplot-{id}.pdf"), path = here::here("Figures/Chapter-Contact/"), height = 0.43, width = 4)
+      theme_void() +
+    theme(plot.background = element_rect(fill = "white", size = 0))
+    ggsave(p, filename = glue::glue("sparkplot-{id}.jpg"), path = here::here("Figures/Chapter-Contact/"), height = 0.45, width = 4)
 }
 
 
-posterior.table <- posterior.table %>% 
-  mutate(Credibility = paste0("\\raisebox{-.25\\height}{\\includegraphics[width=2.5cm]{../../Figures/Chapter-Contact/sparkplot-", id, ".pdf}}")) %>% 
-  arrange(`Reference Group`, `Contact Type`) %>% 
-  dplyr::select(-c(id, `Reference Group`))
+posterior.table.df <- posterior.table.df %>% 
+  mutate(Probability = paste0("\\raisebox{-.25\\height}{\\includegraphics[width=2.5cm]{../Figures/Chapter-Contact/sparkplot-", id, ".jpg}}")) %>% 
+  arrange(id, `People Who Report`) %>% 
+  dplyr::select(-c(.id, id))
 
-posterior.table.out <- posterior.table %>% 
-  kable(format = "latex", booktabs = TRUE, align = c("l","l","l","c"), caption = "Summary of posterior estimates for contact models \\label{tab:posteriordistribution}", escape = FALSE) %>% 
-  kable_styling(latex_options = c("striped"), protect_latex = TRUE, font_size = 8, position = "center") %>% 
-  row_spec(0, bold = TRUE) %>% 
-  pack_rows("US Troops", 1, 8) %>% 
-  pack_rows("US Government", 9, 16) %>% 
-  pack_rows("US People", 17, 24) %>% 
+posterior.table.out <- posterior.table.df %>% 
+  kable(format = "latex", booktabs = TRUE, align = c("l","l","l","l", "c", "c"), caption = "Summary of posterior estimates for contact models \\label{tab:contactposteriordistribution}", escape = FALSE) %>% 
+  kable_styling(latex_options = c("striped"), protect_latex = TRUE, font_size = 7, position = "center") %>% 
+  row_spec(0, bold = TRUE) %>%
+  pack_rows("Attitudes Towards US Troops", 1,8, color = "white", background = "gray") %>% 
+  pack_rows("Attitudes Towards US Government", 9,16, color = "white", background = "gray") %>% 
+  pack_rows("Attitudes Towards US People", 17,24, color = "white", background = "gray") %>% 
+  footnote(number = c("\\\\scriptsize Results are from the population-level effects of the three multilevel categorical logit models predicting attitudes towards US military personnel deployed to the host state, the US government, and the American people. All comparisons are relative to people who report not having personal or network contacts or benefits. Reference category for the outcome variable is the 'Neutral' attitude response.",
+                      "The probability column denotes the percentage of the posterior distribution that falls above or below 0.",
+                      "Median and interval values are the median coefficient estimate for the individual logit equations reported on the log-odds scale and 95 percent credible intervals.",
+                      "Main predictor variables indicate whether the respondents reported that they, or someone they know, had direct personal contact with US military personnel, or received economic benefits from the US military presence."),
+           fixed_small_size = TRUE,
+           footnote_as_chunk = FALSE,
+           threeparttable = TRUE,
+           escape = FALSE) %>% 
+  landscape() %>% 
   save_kable(., file = here("Tables/Chapter-Contact/model-posterior-table.tex"),
              keep_tex = TRUE)
 
@@ -1180,7 +1291,7 @@ posterior.table.out <- posterior.table %>%
 ### Varying Effects
 
 
-```{r contact coefficients, dpi=400}
+```{r contact coefficients}
 
 # Read in model files
 m.c.t2 <- readRDS(here::here("Output/Chapter-Contact/m.c.t2.rds"))
@@ -1266,7 +1377,7 @@ ggplot(coef.plot.df, aes(x = .value, y = country, color = variable)) +
        y = "",
        color = "Contact/Benefit Type")
 
-ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-plot-varying.png"), height = 13, width = 8, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-plot-varying.tiff"), height = 13, width = 8, units = "in", device = grDevices::png)
 
 
 

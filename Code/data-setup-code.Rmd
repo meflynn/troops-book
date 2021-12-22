@@ -596,9 +596,6 @@ wdi.data <- wbstats::wb_data(country = "countries_only",
 troops.com <- get_troopdata(host = as.numeric(ccode.list), startyear = 2018, endyear = 2020)
 
 
-#### Reported Crime Data ####
-crime.events <- fread("../Crime/Data/Handcoded Data/crime 1.0.csv")
-
 # Merge everything together and generate appropriate measures
 o.data <- base.data %>% 
   mutate(ed = ifelse(ed > 25, NA, ed),
@@ -607,7 +604,10 @@ o.data <- base.data %>%
          party_reps = factor(party_reps, ordered = FALSE, levels = c("Don't know/decline to answer", "Very negative", "Somewhat negative", "Neutral", "Somewhat positive", "Very positive")),
          troops_econ_nat = factor(troops_econ_nat, ordered = FALSE, levels = c("Don't know/decline to answer", "Very negative", "Negative", "Neither Positive nor negative", "Positive", "Very positive")),
          troops_econ_local = factor(troops_econ_local, ordered = FALSE, levels = c("Don't know/decline to answer", "Very negative", "Negative", "Neither Positive nor negative", "Positive", "Very positive")),
-         troops_crime_pers = factor(troops_crime_pers, ordered = FALSE, levels = c("Don't know/decline to answer", "No", "Yes")),
+         troops_crime_pers = factor(troops_crime_pers, ordered = FALSE, levels = c("No", "Yes", "Don't know/decline to answer")),
+         troops_crime_pers = relevel(troops_crime_pers, ref = "No"),
+         troops_crime_nonpers = factor(troops_crime_nonpers, ordered = FALSE, levels = c("No", "Yes", "Don't know/decline to answer")),
+         troops_crime_nonpers = relevel(troops_crime_nonpers, ref = "No"),
          troops_1 = factor(troops_1, ordered = FALSE, levels = c("Don't know/decline to answer", "Very unfavorable", "Somewhat unfavorable", "Neutral", "Somewhat favorable", "Very favorable")),
          troops_1_ord = droplevels(troops_1, exclude = c("Don't know/decline to answer")),
          troops_1_ord = factor(troops_1, ordered = TRUE, levels = c("Very unfavorable", "Somewhat unfavorable", "Neutral", "Somewhat favorable", "Very favorable")),
@@ -621,7 +621,7 @@ o.data <- base.data %>%
          income = factor(income, ordered = FALSE, levels = c("0%-16%", "17%-34%", "35%-50%", "51%-67%", "65%-83%", "84%-100%"), exclude = NA),
          gender = factor(gender, ordered = FALSE, levels = c("Female", "Male", "Non-binary", "None of the above")),
          gender = relevel(gender, ref = "Male"),
-         minority = factor(minority, ordered = FALSE, levels = c("Decline to answer", "No", "Yes")),
+         minority = factor(minority, ordered = FALSE, levels = c("No", "Yes", "Decline to answer")),
          minority = relevel(minority, ref = "No"),
          protest = factor(protest, ordered = FALSE, levels = c("Don't know/Decline to answer", "Never", "One time", "Two times", "Three times", "More than three times")),
          contact_pers = factor(contact_pers, ordered = FALSE, levels = c("Don't know/decline to answer", "No", "Yes")),

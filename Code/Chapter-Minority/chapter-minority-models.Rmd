@@ -22,6 +22,7 @@ library(dagitty)
 library(ggdag)
 library(arm)
 library(brms)
+library(job)
 library(rstan)
 library(cmdstanr)
 library(parallel)
@@ -66,6 +67,15 @@ ccode.list <- c("200", "210", "211", "230", "235", "255", "290", "325", "640", "
 
 # Load opinion data for individual-level protest models.
 load(here::here("Data/General", "opinion.data.RData")) 
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
 
 
 ```
@@ -113,6 +123,8 @@ ggsave(here("Figures/Chapter-Minority", "figure-dag-minority-minority.png"))
 adjustmentSets(minority.dag)
 
 ```
+
+
 
 
 # Descriptive Figures
@@ -251,86 +263,261 @@ ggplot(o.data %>% filter(grepl("Yes|No", minority)), aes(x = ed, y = income.5.ca
 
 # Models
 
+## Priors
+
+```{r priors}
+
+Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
+
+
+# Get priors
+PRIOR.LIST.T <- get_prior(troops_1_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +  
+            (1 + minority |r| country),
+                    data = o.data,
+            family = categorical(link = "logit", refcat = "neutral")) 
+
+# Default and regularizing priors
+# Use the same basic data.frame for everything
+PRIOR.LIST.REG <- PRIOR.LIST.T %>% 
+  filter(coef == "") %>% 
+  mutate(prior = case_when(
+    class == "b" ~ "normal(0,2)",
+    class == "sd" ~ "gamma(1, 1)",
+    class == "Intercept" ~ "normal(0,3)",
+    TRUE ~ prior
+  )) 
+
+
+# Informative beta Priors
+PRIOR.LIST.T <- PRIOR.LIST.T %>% 
+  filter(class == "b" & !is.na(coef) & coef != "") 
+
+apsr.t <- readRDS(here::here("../Papers/Published/Primary Paper - Contact/Bayes Diagnostics/m1.cat.bayes.rds"))
+apsr.g <- readRDS(here::here("../Papers/Published/Primary Paper - Contact/Bayes Diagnostics/m2.cat.bayes.rds"))
+apsr.p <- readRDS(here::here("../Papers/Published/Primary Paper - Contact/Bayes Diagnostics/m3.cat.bayes.rds"))
+
+
+# Troops Priors
+PRIOR.T <- empty_prior()
+
+coeflist <- as_tibble(apsr.t) %>% 
+  dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
+  pivot_longer(cols = 1:ncol(.), 
+               names_to = c("coef", ".value"),
+               names_pattern = "(.+)_(.+$)") %>% 
+  mutate(prior = glue::glue("normal({round(mean, 2)},{round(sd, 2)})"),
+         dpar = case_when(
+           grepl("mupos", coef) ~ "mupos",
+           grepl("muneg", coef) ~ "muneg",
+           grepl("mudk", coef) ~ "mudk",
+         ),
+         coef = gsub("mupos_|muneg_|mudk_", "", coef),
+         coef = gsub("knowDDe", "knowDde", coef)) %>% 
+  filter(grepl("b_", coef)) %>% 
+  mutate(coef = gsub("b_", "", coef),
+         class = "b") %>% 
+  dplyr::select(-c(mean, sd)) %>% 
+  filter(grepl(".*contact_per.*|.*benefit_per.*|.*gender.*|.*inf.*|.*age.*|.*minority.*", coef)) %>% 
+  filter(!grepl(".*minorityNo.*", coef))
+
+PRIOR.T <- bind_rows(PRIOR.T, coeflist, PRIOR.LIST.REG) 
+PRIOR.T[is.na(PRIOR.T)] <- ""
+
+
+# Government Priors
+PRIOR.G <- empty_prior() 
+
+PRIOR.LIST.G <- get_prior(american_g_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+            family = categorical(link = "logit", refcat = "neutral")) %>% 
+  filter(class == "b" & !is.na(coef) & coef != "") 
+
+coeflist <- as_tibble(apsr.g) %>% 
+  dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
+  pivot_longer(cols = 1:ncol(.), 
+               names_to = c("coef", ".value"),
+               names_pattern = "(.+)_(.+$)") %>% 
+  mutate(prior = glue::glue("normal({round(mean, 2)},{round(sd, 2)})"),
+         dpar = case_when(
+           grepl("mupos", coef) ~ "mupos",
+           grepl("muneg", coef) ~ "muneg",
+           grepl("mudk", coef) ~ "mudk",
+         ),
+         coef = gsub("mupos_|muneg_|mudk_", "", coef),
+         coef = gsub("knowDDe", "knowDde", coef)) %>% 
+  filter(grepl("b_", coef)) %>% 
+  mutate(coef = gsub("b_", "", coef),
+         class = "b") %>% 
+  dplyr::select(-c(mean, sd)) %>% 
+  filter(grepl(".*contact_per.*|.*benefit_per.*|.*gender.*|.*inf.*|.*age.*|.*minority.*", coef)) %>% 
+  filter(!grepl(".*minorityNo.*", coef))
+
+PRIOR.G <- bind_rows(PRIOR.G, PRIOR.LIST.REG, coeflist) 
+PRIOR.G[is.na(PRIOR.G)] <- ""
+
+
+
+
+# People Priors
+PRIOR.P <- empty_prior()
+
+PRIOR.LIST.P <- get_prior(american_p_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+            family = categorical(link = "logit", refcat = "neutral")) %>% 
+  filter(class == "b" & !is.na(coef) & coef != "") 
+
+coeflist <- as_tibble(apsr.p) %>% 
+  dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
+  pivot_longer(cols = 1:ncol(.), 
+               names_to = c("coef", ".value"),
+               names_pattern = "(.+)_(.+$)") %>% 
+  mutate(prior = glue::glue("normal({round(mean, 2)},{round(sd, 2)})"),
+         dpar = case_when(
+           grepl("mupos", coef) ~ "mupos",
+           grepl("muneg", coef) ~ "muneg",
+           grepl("mudk", coef) ~ "mudk",
+         ),
+         coef = gsub("mupos_|muneg_|mudk_", "", coef),
+         coef = gsub("knowDDe", "knowDde", coef)) %>% 
+  filter(grepl("b_", coef)) %>% 
+  mutate(coef = gsub("b_", "", coef),
+         class = "b") %>% 
+  dplyr::select(-c(mean, sd)) %>% 
+  filter(grepl(".*contact_per.*|.*benefit_per.*|.*gender.*|.*inf.*|.*age.*|.*minority.*", coef)) %>% 
+  filter(!grepl(".*minorityNo.*", coef))
+
+PRIOR.P <- bind_rows(PRIOR.P, PRIOR.LIST.REG, coeflist) 
+PRIOR.P[is.na(PRIOR.P)] <- ""
+
+
+```
+
+
+
+
 ## Minority only models
 
 ```{r Basic Modles with minority only}
 
-# Conflicted pckage really fucks things up
-if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
 
+job::job(import = "auto", "m.t1" = {
 
-# Parallelize machine
-options(mc.cores = parallel::detectCores())
-ncores <- parallel::detectCores()
-rstan_options(auto_write = TRUE)
+  Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
 
-
-VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
-                set_prior("normal(0, 5)", class = "Intercept"))
-
-ITER <- 1000
-WARMUP <-  500
-CORES <- 4
+ITER <- 2000
+WARMUP <-  1000
+CORES <- 8
 CHAINS <- 4
 SEED <- 123
 
-tic()
+PRIOR.T.BASE <- PRIOR.T %>% 
+  filter(grepl(".*minority.*", coef))
+
 #### Troops  ####
 m.t1 <- brm(troops_1_cat ~ minority +
             (1 |r| country),
+                    family = categorical(link = "logit", refcat = "neutral"),
                     data = o.data,
-                    prior = VAGUEPRIOR,
+                    prior = PRIOR.T.BASE,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
-                    thin = 1,
+                    threads = threading(threads = 2),
+                    refresh = 100,
                     seed = SEED,
+                    control = list(adapt_delta = 0.80,
+                             max_treedepth = 10),
+                    file_refit = "on_change",
                     file = here::here("Output/Chapter-Minority/m.t1"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            backend = "cmdstanr")
+                    backend = "cmdstanr")
+
+}
+)
+
+```
 
 
-toc()
-
-tic()
-
+```{r minority-people-base}
 #### People ####
+
+job::job(import = "auto", "m.p1" = {
+
+  Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
+
+ITER <- 2000
+WARMUP <-  1000
+CORES <- 8
+CHAINS <- 4
+SEED <- 123
+
+PRIOR.P.BASE <- PRIOR.P %>% 
+  filter(grepl(".*minority.*", coef))
+
 m.p1 <- brm(american_p_cat ~ minority +
               (1 |r| country),
+                    family = categorical(link = "logit", refcat = "neutral"),
                     data = o.data,
-                    prior = VAGUEPRIOR,
+                    prior = PRIOR.P.BASE,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
-                    thin = 1,
+                    threads = threading(threads = 2),
+                    refresh = 100,
                     seed = SEED,
+                    control = list(adapt_delta = 0.80,
+                             max_treedepth = 10),
+                    file_refit = "on_change",
                     file = here::here("Output/Chapter-Minority/m.p1"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            backend = "cmdstanr")
+                    save_model = here::here("Output/Chapter-Minority/m.p1.stan"),
+                    backend = "cmdstanr")
+}
+)
 
-toc()
+```
 
+
+```{r minority-government-base}
 
 #### Government ####
 
-tic()
+job::job(import = "auto", "m.g1" = {
+
+  Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
+
+ITER <- 2500
+WARMUP <-  1000
+CORES <- 8
+CHAINS <- 4
+SEED <- 123
+
+PRIOR.G.BASE <- PRIOR.G %>% 
+  filter(grepl(".*minority.*", coef))
+
 m.g1 <- brm(american_g_cat ~ minority +
-            (1 |r| country),
+              (1 |r| country),
+                    family = categorical(link = "logit", refcat = "neutral"),
                     data = o.data,
-                    prior = VAGUEPRIOR,
+                    prior = PRIOR.G.BASE,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
-                    thin = 1,
+                    threads = threading(threads = 2),
+                    refresh = 100,
                     seed = SEED,
+                    control = list(adapt_delta = 0.80,
+                             max_treedepth = 10),
+                    file_refit = "on_change",
                     file = here::here("Output/Chapter-Minority/m.g1"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            backend = "cmdstanr")
+                    save_model = here::here("Output/Chapter-Minority/m.g1.stan"),
+                    backend = "cmdstanr")
+}
+)
 
-toc()
 
 ```
 
@@ -340,113 +527,121 @@ toc()
 ```{r Full Models with demographic and attitudinal variables, echo = FALSE}
 
 # Conflicted pckage really fucks things up
-if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+# 
+job::job(import = "auto", m.t2 = {
 
-
-# Parallelize machine
-options(mc.cores = parallel::detectCores())
-ncores <- parallel::detectCores()
-rstan_options(auto_write = TRUE)
-
-
-VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
-                set_prior("normal(0, 5)", class = "Intercept"))
-
-ITER <- 1000
-WARMUP <-  500
+ITER <- 3000
+WARMUP <-  800
 CORES <- 4
 CHAINS <- 4
 SEED <- 123
 
-tic()
 #### Troops  ####
-
-
 m.t2 <- brm(troops_1_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
             (1 |r| country),
+                    family = categorical(link = "logit", refcat = "neutral"),
                     data = o.data,
-                    prior = VAGUEPRIOR,
+                    prior = PRIOR.T,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
                     thin = 1,
                     seed = SEED,
+                    file_refit = "on_change",
+                    save_model = here::here("Output/Chapter-Minority/m.t2.stan"),
                     file = here::here("Output/Chapter-Minority/m.t2"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.85,
-                                          max_treedepth = 13),
-            backend = "cmdstanr")
+                    control = list(adapt_delta = 0.82,
+                                   max_treedepth = 12),
+                    backend = "cmdstanr")
+
+}
+)
+
+```
 
 
-toc()
+```{r people}
 
-tic()
+job::job(import = "auto", m.p2 = {
+
+ITER <- 3000
+WARMUP <-  1000
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
 
 #### People ####
 m.p2 <- brm(american_p_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
             (1 |r| country),
+                    family = categorical(link = "logit", refcat = "neutral"),
                     data = o.data,
-                    prior = VAGUEPRIOR,
+                    prior = PRIOR.P,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
                     thin = 1,
                     seed = SEED,
+                    file_refit = "on_change",
+                    save_model = here::here("Output/Chapter-Minority/m.p2.stan"),
                     file = here::here("Output/Chapter-Minority/m.p2"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.85,
-                                          max_treedepth = 13),
-            backend = "cmdstanr")
+                    control = list(adapt_delta = 0.80,
+                                   max_treedepth = 10),
+                    backend = "cmdstanr")
 
-toc()
+}
+)
 
-tic()
+```
+
+
+```{r government}
 
 #### Government ####
+
+job::job(import = "auto", m.g2 = {
+
+ITER <- 4000
+WARMUP <-  2000
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
 
 
 m.g2 <- brm(american_g_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
             (1 |r| country),
+                    family = categorical(link = "logit", refcat = "neutral"),
                     data = o.data,
-                    prior = VAGUEPRIOR,
+                    prior = PRIOR.G,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
+                    threads = threading(threads = 2),
                     thin = 1,
                     seed = SEED,
+                    file_refit = "on_change",
+                    save_model = here::here("Output/Chapter-Minority/m.g2.stan"),
                     file = here::here("Output/Chapter-Minority/m.g2"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.85,
-                                          max_treedepth = 13),
+            control = list(adapt_delta = 0.80,
+                                          max_treedepth = 10),
             backend = "cmdstanr")
 
-toc()
+}
+)
 
 ```
 
 
 ## Demographic and Attitudinal Models w/ Varying Slopes
 
-```{r Full Models with demographic and attitudinal variables, echo = FALSE}
+```{r troops, echo = FALSE}
 
-# Conflicted pckage really fucks things up
-if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+job::job(import = "auto", m.t3 = {
 
-
-# Parallelize machine
-options(mc.cores = parallel::detectCores())
-ncores <- parallel::detectCores()
-rstan_options(auto_write = TRUE)
-
-
-VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
-                set_prior("normal(0, 5)", class = "Intercept"))
-
-ITER <- 2000
-WARMUP <-  1000
+ITER <- 5000
+WARMUP <-  2000
 CORES <- 4
 CHAINS <- 4
 SEED <- 123
@@ -455,64 +650,96 @@ tic()
 #### Troops  ####
 m.t3 <- brm(troops_1_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
             (1 + minority |r| country),
+                    family = categorical(link = "logit", refcat = "neutral"),
                     data = o.data,
-                    prior = VAGUEPRIOR,
+                    prior = PRIOR.T,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
+                    file_refit = "on_change",
                     thin = 1,
                     seed = SEED,
+                    save_model = here::here("Output/Chapter-Minority/m.t3.stan"),
                     file = here::here("Output/Chapter-Minority/m.t3"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.85,
-                                          max_treedepth = 13),
+            control = list(adapt_delta = 0.80,
+                                          max_treedepth = 10),
             backend = "cmdstanr")
 
+}
+)
 
-toc()
-
-
-tic()
-#### People ####
-m.p3 <- brm(american_p_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
-            (1 + minority |r| country),
-                    data = o.data,
-                    prior = VAGUEPRIOR,
-                    iter = ITER,
-                    warmup = WARMUP,
-                    cores = CORES,
-                    chains = CHAINS,
-                    thin = 1,
-                    seed = SEED,
-                    file = here::here("Output/Chapter-Minority/m.p3"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.85,
-                                          max_treedepth = 13),
-            backend = "cmdstanr")
-
-toc()
+```
 
 
-tic()
-#### Government ####
-m.g3 <- brm(american_g_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
-            (1 + minority |r| country),
-                    data = o.data,
-                    prior = VAGUEPRIOR,
-                    iter = ITER,
-                    warmup = WARMUP,
-                    cores = CORES,
-                    chains = CHAINS,
-                    thin = 1,
-                    seed = SEED,
-                    file = here::here("Output/Chapter-Minority/m.g3"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.85,
-                                          max_treedepth = 13),
-            backend = "cmdstanr")
+```{r government, echo = FALSE}
 
-toc()
+job::job(import = "auto", m.g3 = {
+  
+  ITER <- 5000
+  WARMUP <-  2000
+  CORES <- 8 
+  CHAINS <- 4
+  SEED <- 123
+  
+  tic()
+  #### Troops  ####
+  m.g3 <- brm(american_g_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                (1 + minority |r| country),
+              family = categorical(link = "logit", refcat = "neutral"),
+              data = o.data,
+              prior = PRIOR.G,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              seed = SEED,
+              threads = threading(threads = 2),
+              file_refit = "on_change",
+              thin = 1,
+              save_model = here::here("Output/Chapter-Minority/m.g3.stan"),
+              file = here::here("Output/Chapter-Minority/m.g3"),
+              control = list(adapt_delta = 0.80,
+                             max_treedepth = 10),
+              backend = "cmdstanr")
+  
+}
+)
+
+```
+
+
+```{r people, echo = FALSE}
+
+job::job(import = "auto", m.p3 = {
+  
+  ITER <- 5000
+  WARMUP <-  2000
+  CORES <- 4
+  CHAINS <- 4
+  SEED <- 123
+  
+  #### Troops  ####
+  m.p3 <- brm(american_p_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                (1 + minority |r| country),
+              family = categorical(link = "logit", refcat = "neutral"),
+              data = o.data,
+              prior = PRIOR.P,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              file_refit = "on_change",
+              thin = 1,
+              seed = SEED,
+              save_model = here::here("Output/Chapter-Minority/m.p3.stan"),
+              file = here::here("Output/Chapter-Minority/m.p3"),
+              control = list(adapt_delta = 0.80,
+                             max_treedepth = 10),
+              backend = "cmdstanr")
+  
+}
+)
 ```
 
 
@@ -520,187 +747,220 @@ toc()
 
 ## Interaction with contact
 
-```{r Full Models with demographic and attitudinal variables, echo = FALSE}
-
-# Conflicted pckage really fucks things up
-if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+```{r troops, echo = FALSE}
 
 
-# Parallelize machine
-options(mc.cores = parallel::detectCores())
-ncores <- parallel::detectCores()
-rstan_options(auto_write = TRUE)
+job::job(import = "auto", m.t4 = {
+#### Troops  ####
 
-
-VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
-                set_prior("normal(0, 5)", class = "Intercept"))
-
-ITER <- 1000
-WARMUP <-  500
+ITER <- 2000
+WARMUP <-  1000
 CORES <- 4
 CHAINS <- 4
 SEED <- 123
 
-tic()
-#### Troops  ####
-
-
 m.t4 <- brm(troops_1_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
             (1 |r| country),
+                    family = categorical(link = "logit", refcat = "neutral"),
                     data = o.data,
-                    prior = VAGUEPRIOR,
+                    prior = PRIOR.T,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
                     thin = 1,
                     seed = SEED,
+                    file_refit = "on_change",
+                    save_model = here::here("Output/Chapter-Minority/m.t4.stan"),
                     file = here::here("Output/Chapter-Minority/m.t4"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.83,
+                    control = list(adapt_delta = 0.83,
                                           max_treedepth = 13),
             backend = "cmdstanr")
+}
+)
+
+```
 
 
-toc()
+```{r people}
 
-tic()
+job::job(import = "auto", m.p4 = {
+  #### Troops  ####
+  
+  ITER <- 2000
+  WARMUP <-  1000
+  CORES <- 4
+  CHAINS <- 4
+  SEED <- 123
+  
+  m.p4 <- brm(american_p_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                (1 |r| country),
+              family = categorical(link = "logit", refcat = "neutral"),
+              data = o.data,
+              prior = PRIOR.P,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              thin = 1,
+              seed = SEED,
+              file_refit = "on_change",
+              save_model = here::here("Output/Chapter-Minority/m.p4.stan"),
+              file = here::here("Output/Chapter-Minority/m.p4"),
+              control = list(adapt_delta = 0.83,
+                             max_treedepth = 13),
+              backend = "cmdstanr")
+}
+)
 
-#### People ####
-m.p4 <- brm(american_p_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
-            (1 |r| country),
-                    data = o.data,
-                    prior = VAGUEPRIOR,
-                    iter = ITER,
-                    warmup = WARMUP,
-                    cores = CORES,
-                    chains = CHAINS,
-                    thin = 1,
-                    seed = SEED,
-                    file = here::here("Output/Chapter-Minority/m.p4"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.83,
-                                          max_treedepth = 13),
-            backend = "cmdstanr")
+```
 
-toc()
 
-tic()
-
+```{r government}
 #### Government ####
 
-
-m.g4 <- brm(american_g_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
-            (1 |r| country),
-                    data = o.data,
-                    prior = VAGUEPRIOR,
-                    iter = ITER,
-                    warmup = WARMUP,
-                    cores = CORES,
-                    chains = CHAINS,
-                    thin = 1,
-                    seed = SEED,
-                    file = here::here("Output/Chapter-Minority/m.g4"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.83,
-                                          max_treedepth = 13),
-            backend = "cmdstanr")
-
-toc()
-
+job::job(import = "auto", m.g4 = {
+  #### Troops  ####
+  
+ITER <- 2500
+WARMUP <-  1000
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+  
+  m.g4 <- brm(american_g_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                (1 |r| country),
+              family = categorical(link = "logit", refcat = "neutral"),
+              data = o.data,
+              prior = PRIOR.P,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              thin = 1,
+              seed = SEED,
+              file_refit = "on_change",
+              save_model = here::here("Output/Chapter-Minority/m.g4.stan"),
+              file = here::here("Output/Chapter-Minority/m.g4"),
+              control = list(adapt_delta = 0.83,
+                             max_treedepth = 12),
+              backend = "cmdstanr")
+}
+)
 ```
 
 
 
 ## Interaction with contact varying effect
 
-```{r Full Models with demographic and attitudinal variables, echo = FALSE}
+```{r troops, echo = FALSE}
 
-# Conflicted pckage really fucks things up
-if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+job::job(import = "auto", m.t5 = {
 
-
-# Parallelize machine
-options(mc.cores = parallel::detectCores())
-ncores <- parallel::detectCores()
-rstan_options(auto_write = TRUE)
-
-
-VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
-                set_prior("normal(0, 5)", class = "Intercept"))
-
-ITER <- 1200
-WARMUP <-  600
+ITER <- 3000
+WARMUP <-  1000
 CORES <- 4
 CHAINS <- 4
 SEED <- 123
 
-tic()
 #### Troops  ####
-
 
 m.t5 <- brm(troops_1_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
             (1 + minority + minority:contact_pers + contact_pers |r| country),
                     data = o.data,
-                    prior = VAGUEPRIOR,
+                    family = categorical(link = "logit", refcat = "neutral"),
+                    prior = PRIOR.T,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
+                    refresh = 100,
                     thin = 1,
                     seed = SEED,
+                    file_refit = "on_change",
+                    save_model = here::here("Output/Chapter-Minority/m.t5.stan"),
                     file = here::here("Output/Chapter-Minority/m.t5"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.83,
-                                          max_treedepth = 13),
+            control = list(adapt_delta = 0.82,
+                                          max_treedepth = 12),
             backend = "cmdstanr")
 
+}
+)
 
-toc()
-
-tic()
-
-#### People ####
-m.p5 <- brm(american_p_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
-            (1 + minority + minority:contact_pers + contact_pers |r| country),
-                    data = o.data,
-                    prior = VAGUEPRIOR,
-                    iter = ITER,
-                    warmup = WARMUP,
-                    cores = CORES,
-                    chains = CHAINS,
-                    thin = 1,
-                    seed = SEED,
-                    file = here::here("Output/Chapter-Minority/m.p5"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.83,
-                                          max_treedepth = 13),
-            backend = "cmdstanr")
-
-toc()
-
-tic()
-
-#### Government ####
+```
 
 
-m.g5 <- brm(american_g_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
-            (1 + minority + minority:contact_pers + contact_pers |r| country),
-                    data = o.data,
-                    prior = VAGUEPRIOR,
-                    iter = ITER,
-                    warmup = WARMUP,
-                    cores = CORES,
-                    chains = CHAINS,
-                    thin = 1,
-                    seed = SEED,
-                    file = here::here("Output/Chapter-Minority/m.g5"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.83,
-                                          max_treedepth = 13),
-            backend = "cmdstanr")
+```{r people}
 
-toc()
+job::job(import = "auto", m.p5 = {
+  
+  ITER <- 3000
+  WARMUP <-  1000
+  CORES <- 4
+  CHAINS <- 4
+  SEED <- 123
+  
+  #### Troops  ####
+  
+  m.p5 <- brm(american_p_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                (1 + minority + minority:contact_pers + contact_pers |r| country),
+              data = o.data,
+              family = categorical(link = "logit", refcat = "neutral"),
+              prior = PRIOR.P,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              refresh = 100,
+              thin = 1,
+              seed = SEED,
+              file_refit = "on_change",
+              save_model = here::here("Output/Chapter-Minority/m.p5.stan"),
+              file = here::here("Output/Chapter-Minority/m.p5"),
+              control = list(adapt_delta = 0.82,
+                             max_treedepth = 12),
+              backend = "cmdstanr")
+  
+}
+)
+
+```
+
+
+```{r government}
+
+job::job(import = "auto", m.g5 = {
+  
+  ITER <- 3000
+  WARMUP <-  1000
+  CORES <- 4
+  CHAINS <- 4
+  SEED <- 123
+  
+  #### Troops  ####
+  
+  m.g5 <- brm(american_p_cat ~ minority + minority:contact_pers + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                (1 + minority + minority:contact_pers + contact_pers |r| country),
+              data = o.data,
+              family = categorical(link = "logit", refcat = "neutral"),
+              prior = PRIOR.G,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              refresh = 100,
+              thin = 1,
+              seed = SEED,
+              file_refit = "on_change",
+              save_model = here::here("Output/Chapter-Minority/m.g5.stan"),
+              file = here::here("Output/Chapter-Minority/m.g5"),
+              control = list(adapt_delta = 0.82,
+                             max_treedepth = 12),
+              backend = "cmdstanr")
+  
+}
+)
+
 
 ```
 
@@ -709,92 +969,133 @@ toc()
 ## Japan only models
 
 ### Varying minority model
-```{r Japan Only Varying minority coefficient}
-# Conflicted pckage really fucks things up
-if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+```{r troops}
 
 
-# Parallelize machine
-options(mc.cores = parallel::detectCores())
-ncores <- parallel::detectCores()
-rstan_options(auto_write = TRUE)
+job::job(import = "auto", m.t4.japan = {
+  
+# Change priors to reflect province grouping rather than country
+PRIOR.T.PROV <- PRIOR.T %>% 
+  mutate(group = ifelse(group == "country", "province", group))
 
-
-VAGUEPRIOR <- c(set_prior("normal(0, 1)", class = "b"),
-                set_prior("normal(0, 5)", class = "Intercept"))
-
-ITER <- 1000
-WARMUP <-  500
+ITER <- 5000
+WARMUP <-  2500
 CORES <- 4
 CHAINS <- 4
 SEED <- 123
 
-tic()
 #### Troops  ####
-
 
 m.t4.japan <- brm(troops_1_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
             (1 + minority |r| province),
                     data = o.data %>% filter(country == "Japan"),
-                    prior = VAGUEPRIOR,
+                    family = categorical(link = "logit", refcat = "neutral"),
+                    prior = PRIOR.T.PROV,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
+                    refresh = 100,
                     thin = 1,
                     seed = SEED,
+                    file_refit = "on_change",
+                    save_pars = save_pars(all = TRUE),
+                    save_model = here::here("Output/Chapter-Minority/m.t4.japan.stan"),
                     file = here::here("Output/Chapter-Minority/m.t4.japan"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.83,
-                                          max_treedepth = 13),
+            control = list(adapt_delta = 0.92,
+                                          max_treedepth = 11),
             backend = "cmdstanr")
 
+}
+)
 
-toc()
+```
 
-tic()
+
+```{r people}
 
 #### People ####
-m.p4.japan <- brm(american_p_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
-            (1 + minority |r| province),
+
+job::job(import = "auto", m.p4.japan = {
+  
+  # Change priors to reflect province grouping rather than country
+  PRIOR.P.PROV <- PRIOR.P %>% 
+    mutate(group = ifelse(group == "country", "province", group))
+  
+  ITER <- 5000
+  WARMUP <-  2500
+  CORES <- 4
+  CHAINS <- 4
+  SEED <- 123
+  
+  #### Troops  ####
+  
+  m.p4.japan <- brm(american_p_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                      (1 + minority |r| province),
                     data = o.data %>% filter(country == "Japan"),
-                    prior = VAGUEPRIOR,
+                    family = categorical(link = "logit", refcat = "neutral"),
+                    prior = PRIOR.P.PROV,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
+                    refresh = 100,
                     thin = 1,
                     seed = SEED,
+                    file_refit = "on_change",
+                    save_pars = save_pars(all = TRUE),
+                    save_model = here::here("Output/Chapter-Minority/m.p4.japan.stan"),
                     file = here::here("Output/Chapter-Minority/m.p4.japan"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.83,
-                                          max_treedepth = 13),
-            backend = "cmdstanr")
+                    control = list(adapt_delta = 0.92,
+                                   max_treedepth = 11),
+                    backend = "cmdstanr")
+  
+}
+)
 
-toc()
+```
 
-tic()
+
+```{r government}
 
 #### Government ####
 
-
-m.g4.japan <- brm(american_g_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z +
-            (1 + minority |r| province),
+job::job(import = "auto", m.g4.japan = {
+  
+  # Change priors to reflect province grouping rather than country
+  PRIOR.G.PROV <- PRIOR.G %>% 
+    mutate(group = ifelse(group == "country", "province", group))
+  
+  ITER <- 5000
+  WARMUP <-  2500
+  CORES <- 4
+  CHAINS <- 4
+  SEED <- 123
+  
+  #### Troops  ####
+  
+  m.g4.japan <- brm(american_g_cat ~ minority + age + ed_z + ideology_z + income.5.cat + gender + contact_pers + benefit_pers + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+                      (1 + minority |r| province),
                     data = o.data %>% filter(country == "Japan"),
-                    prior = VAGUEPRIOR,
+                    family = categorical(link = "logit", refcat = "neutral"),
+                    prior = PRIOR.G.PROV,
                     iter = ITER,
                     warmup = WARMUP,
                     cores = CORES,
                     chains = CHAINS,
+                    refresh = 100,
                     thin = 1,
                     seed = SEED,
+                    file_refit = "on_change",
+                    save_pars = save_pars(all = TRUE),
+                    save_model = here::here("Output/Chapter-Minority/m.g4.japan.stan"),
                     file = here::here("Output/Chapter-Minority/m.g4.japan"),
-                    family = categorical(link = "logit", refcat = "neutral"),
-            control = list(adapt_delta = 0.83,
-                                          max_treedepth = 13),
-            backend = "cmdstanr")
-
-toc()
+                    control = list(adapt_delta = 0.92,
+                                   max_treedepth = 11),
+                    backend = "cmdstanr")
+  
+}
+)
 
 ```
 
