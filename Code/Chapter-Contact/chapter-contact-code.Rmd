@@ -78,7 +78,6 @@ library(ltxsparklines)
 #library(rroughviz)
 
 
-
 knitr::opts_chunk$set(comment = '', dpi = 400)
 
 sysfonts::font_add_google("Oswald", family = "oswald")
