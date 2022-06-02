@@ -143,7 +143,7 @@ ggplot() +
   theme(legend.text = element_text(size = basesize*1.05, margin = margin(t = -6, unit = "pt")),
         legend.title = element_text(size = basesize*1.1, lineheight = 0.3),
         plot.margin = margin(0, 0, 0, 0)) +
-  viridis::scale_fill_viridis(option = "magma", direction = 1, begin = 0.1, end = 0.9, na.value = "gray90", breaks = c(0, 20, 200, 2000, 20000, 200000), limits = c(0, 200000), trans = "log1p", label = comma_format()) +
+  viridis::scale_fill_viridis(option = "magma", direction = -1, begin = 0.1, end = 0.9, na.value = "gray90", breaks = c(0, 20, 200, 2000, 20000, 200000), limits = c(0, 200000), trans = "log1p", label = comma_format()) +
   coord_sf(crs = st_crs("ESRI:54030")) +
   labs(fill = "Deployment\nSize")
 
@@ -176,7 +176,7 @@ ggplot() +
   theme(legend.text = element_text(size = basesize*1.05, margin = margin(t = -6, unit = "pt")),
         legend.title = element_text(size = basesize*1.1, lineheight = 0.3),
         plot.margin = margin(0, 0, 0, 0)) +
-  viridis::scale_fill_viridis(option = "magma", direction = 1, begin = 0.1, end = 0.9, na.value = "gray90", breaks = c(0, 20, 200, 2000, 20000, 200000), limits = c(0, 200000), trans = "log1p", label = comma_format()) +
+  viridis::scale_fill_viridis(option = "magma", direction = -1, begin = 0.1, end = 0.9, na.value = "gray90", breaks = c(0, 20, 200, 2000, 20000, 200000), limits = c(0, 200000), trans = "log1p", label = comma_format()) +
   coord_sf(crs = st_crs("ESRI:54030")) +
   labs(fill = "Deployment\nSize")
 

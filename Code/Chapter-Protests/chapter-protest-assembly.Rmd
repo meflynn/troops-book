@@ -34,6 +34,7 @@ library(arm)
 library(tidyquant)
 library(readxl)
 library(psych)
+library(peacesciencer)
 
 
 
@@ -417,6 +418,9 @@ prio.us.sp <- prio.us %>%
 
 # Troop deployment data
 troops.data.combined <- troopdata::troopdata %>% 
+  mutate(ccode = ifelse(ccode == 260, 255, ccode)) %>% 
+  group_by(ccode, year) %>% 
+  dplyr::summarise(troops = max(troops)) %>% 
   group_by(ccode) %>% 
   mutate(log_troops = log1p(troops),
          log_troops = ifelse(is.finite(log_troops), log_troops, NA), # remove NaN and Inf values
@@ -511,8 +515,7 @@ if (file.exists(here::here("Raw Data/mindist-dataframe.csv"))) {
 
 # Create minimum distance dataframe to merge troops data
 # Note that the data only go through 2016. Must replicate 2017 and 2018.
-mindist.df <- bind_rows(mindist) %>% 
-  mutate(year = as.numeric(format(year, "%Y"))) %>% 
+mindist.df <- mindist.df %>% 
   filter(ccode1 != ccode2) %>% 
   mutate(ccode1 = ifelse(ccode1 == 260, 255, ccode1),
          ccode2 = ifelse(ccode2 == 260, 255, ccode2),
