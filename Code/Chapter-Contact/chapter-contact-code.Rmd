@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ---
 title: "Protest Chapter Analysis and Notes"
 author: "Michael Flynn"
@@ -1912,4 +1913,1550 @@ ggplot(attributes(overlap)$data) +
        y = "Density",
        fill = "Coefficient Overlap")
 
+=======
+---
+title: "Protest Chapter Analysis and Notes"
+author: "Michael Flynn"
+date: "3/7/2020"
+output:
+  html_document:
+    df_print: paged
+bibliography: "/Chapters/one.bib"
+editor_options: 
+  markdown: 
+    wrap: 72
+  chunk_output_type: console
+---
+
+# Front Matter
+
+This section loads the data files and libraries. Assembles the main data
+
+```{r setup , echo = FALSE, include = FALSE}
+
+#devtools::install_github("lindeloev/job")
+#devtools::install_github("mrjoh3/ggtrack")
+#devtools::install_github("vincentarelbundock/modelsummary", force = TRUE)
+
+library(tidyverse)
+library(tidyr)
+library(data.table)
+library(job)
+library(broom)
+library(broom.mixed)
+library(psych)
+library(ipw)
+library(modelr)
+library(cshapes)
+library(countrycode)
+library(dagitty)
+library(ggdag)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(arm)
+library(brms)
+library(rstan)
+library(cmdstanr)
+library(parallel)
+library(tidybayes)
+library(scales)
+library(ggdist)
+library(ggh4x)
+library(ggtrack)
+library(viridis)
+library(kableExtra)
+library(BayesPostEst)
+library(texreg)
+library(modelsummary)
+library(gt)
+library(webshot)
+library(kableExtra)
+library(ggExtra)
+library(ggrepel)
+library(ggmcmc)
+library(ggpubr)
+library(ggtext)
+library(patchwork)
+library(here)
+library(arm)
+library(performance)
+#library(ROCR)
+library(tictoc)
+library(sysfonts)
+library(remotes)
+library(formattable)
+library(sparkline)
+library(ltxsparklines)
+#devtools::install_github('tidyss/rroughviz')
+#devtools::install_github("xvrdm/ggrough")
+#library(ggrough)
+#library(rroughviz)
+
+
+
+knitr::opts_chunk$set(comment = '', dpi = 400)
+
+sysfonts::font_add_google("Oswald", family = "oswald")
+showtext_auto()
+
+basesize <- 30
+# Regular plot theme
+theme_flynn <- function(){ 
+  
+      theme_linedraw(base_size = basesize, base_family = "oswald") %+replace% 
+        
+        theme(plot.title = element_text(face = "bold", size = basesize * 1.3, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
+              plot.subtitle = element_text(size = basesize),
+              plot.caption = element_text(face = "italic", size = basesize * 0.6),
+              panel.border = element_rect(fill = NA, size = 0.2),
+              strip.background = element_rect(fill = "gray80", color = "black", size = 0.2),
+              strip.text = element_text(size = basesize, color = "black", face = "bold", margin = margin(t = 0.2, b = 0.2, l = 0.2, r = 0.2, unit = "cm")),
+              panel.background = element_rect(size = 0.2),
+              panel.grid.major = element_line(color = "gray70", size = 0.15),
+              panel.grid.minor = element_line(color = "gray90", size = 0.1),
+              axis.title = element_text(face = "bold", size = basesize),
+              axis.title.y = element_text(angle = 90, margin = margin(t = 0, r = 0.5, b = 0, l = 0, unit = "cm")),
+              axis.title.x = element_text(margin = margin(t = 0.5, r = 0, b = 0, l = 0, unit = "cm")),
+              axis.ticks = element_line(size = 0.1),
+              axis.ticks.length = unit(0.1, "cm"),
+              legend.title = element_text(size = basesize, face = "bold", hjust = 0, margin = margin(t = 0, b = 0, l = 0, r = 0, unit = "cm")),
+              plot.margin = margin(0.5, 0.5, 0.5, 0.5, unit = "cm"),
+              legend.margin = margin(t=-10, b=0, r=0, l=0),
+              legend.box.margin = margin(-10,-10,-10,-10))
+  }
+
+# Map version of theme
+theme_flynn_map <- function(){
+  
+  theme_void(base_family = "oswald") %+replace% 
+    
+    theme(plot.title = element_text(face = "bold", size = 18, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
+          plot.subtitle = element_text(size = 12, hjust = 0, margin = margin(t = 0, b = 0.3, l = 0, r = 0, unit = "cm")),
+          plot.caption = element_text(face = "italic", size = 8, hjust = 1, margin = margin(t = 0.2, unit = "cm")),
+          strip.background = element_rect(fill = "gray80", color = "black"),
+          strip.text = element_text(color = "black", face = "bold"),
+          panel.grid.major = element_line(color = "white", size = 0),
+          panel.grid.minor = element_line(color = "white", size = 0),
+          #axis.title = element_text(face = "bold", size = 0),
+          #axis.title.y = element_text(margin = margin(t = 0, r = 0.5, b = 0, l = 0, unit = "cm")),
+          #axis.title.x = element_text(margin = margin(t = 0.5, r = 0, b = 0, l = 0, unit = "cm")),
+          legend.title = element_text(face = "bold"),
+          legend.position = "bottom",
+          legend.key.height = unit(0.6, "cm"),
+          legend.key.width = unit(2.5, "cm"))
+}
+
+
+ccode.list <- c("200", "210", "211", "230", "235", "255", "290", "325", "640", "690", "732", "740", "840", "900")
+
+
+### Stan Setup ####
+
+# Conflicted pckage really fucks things up
+if(any(grepl("package:conflicted", search()))) detach("package:conflicted") else message("package conflicted not loaded")
+
+
+# Parallelize machine
+options(mc.cores = parallel::detectCores())
+ncores <- parallel::detectCores()
+rstan_options(auto_write = TRUE)
+
+
+# Load opinion data for individual-level protest models.
+load(here::here("Data/General", "opinion.data.RData")) 
+
+# This fixes an encoding issue which duplicated the "Other" category unnecessarily. 
+o.data <- setDT(o.data)[
+  , relig := ifelse(grepl("Other", relig), "Other", relig)
+]
+
+
+set.seed(seed = 66502)
+
+```
+
+
+
+# Descriptive Figures
+
+```{r descriptive figures, dpi = 400, fig.height=5, fig.width=8}
+
+#### Map of survey firm coverage ####
+
+ccode.list.q <- c("210", "211", "230", "235", "290", "640", "840", "900")
+ccode.list.s <- c("200", "255", "290", "325", "690", "732", "740")
+
+
+world <- ne_countries(scale = "medium", returnclass = "sf") %>% 
+  filter(name != "Antarctica")
+
+qualtrics <- ne_countries(scale = "medium", returnclass = "sf") %>% 
+  mutate(ccode = countrycode(name, "country.name", "cown")) %>% 
+  filter(ccode %in% as.numeric(ccode.list.q))
+
+schlesinger <- ne_countries(scale = "medium", returnclass = "sf") %>% 
+  mutate(ccode = countrycode(name, "country.name", "cown")) %>% 
+  filter(ccode %in% as.numeric(ccode.list.s))
+
+map.survey <- ggplot() +
+  geom_sf(data = world, color = "gray90", fill = "gray90") +
+  geom_sf(data = qualtrics, color = "black",  aes(fill = "Qualtrics"), size = 0.1) +
+  geom_sf(data = schlesinger, color = "black", aes( fill = "Schlesinger"), size = 0.1) +
+  theme_void() +
+  theme(legend.position = "bottom",
+        legend.title = element_text(face = "bold")) +
+  scale_x_continuous(expand = c(0, 0)) +
+  viridis::scale_fill_viridis(discrete = TRUE, begin = 0.1, end = 0.65, option = "magma") +
+  coord_sf(crs = st_crs("ESRI:54030"))  +
+  labs(fill = "Survey Firm")
+
+map.survey
+
+ggsave(here::here("Figures/Chapter-Contact/figure-map-survey-firms.tiff"), width = 8, height = 5)
+ggsave(here::here("Figures/Chapter-Contact/figure-map-survey-firms.jpg"), width = 8, height = 5)
+
+```
+
+
+```{r views-of-us-groups}
+#### View of American Government ####
+
+view.gov <- as.data.table(o.data)[!is.na(country) & !is.na(american_gov), american_gov, country][
+  , .N, by = .(country, american_gov)
+]
+
+gov.plot <- ggplot(view.gov, aes(x = N, y = country, fill = american_gov)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", size = 0.1) +
+  scale_x_continuous(labels = percent_format(), expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  viridis::scale_fill_viridis(discrete = TRUE, option = "magma") +
+  theme_flynn() +
+  theme(panel.border = element_blank(),
+        axis.line =  element_blank(),
+        panel.grid.major = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = basesize*1.1, hjust = 0, margin = margin(l = -0.3, unit = "cm")),
+        plot.margin = margin(0.5, l = 0.1, r = 0.96, 0.5, unit = "cm")) +
+  labs(x = "",
+       y = "",
+       title = "US Government",
+       fill = "Response")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-government.tiff"), height = 5, width = 7, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-government.jpg"), height = 5, width = 7, units = "in")
+
+
+
+#### View of American People ####
+
+view.people <- as.data.table(o.data)[!is.na(country) & !is.na(american_people), american_people, country][
+  , .N, by = .(country, american_people)
+]
+
+people.plot <- ggplot(view.people, aes(x = N, y = country, fill = american_people)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", size = 0.1) +
+  scale_x_continuous(labels = percent_format(), expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  viridis::scale_fill_viridis(discrete = TRUE, option = "magma") +
+  theme_flynn() +
+  theme(panel.border = element_blank(),
+        axis.line =  element_blank(),
+        panel.grid.major = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = basesize*1.1, hjust = 0, margin = margin(l = -0.3, unit = "cm")),
+        plot.margin = margin(0.5, l = 0.1, r = 0.96, 0.5, unit = "cm")) +
+  labs(x = "",
+       y = "",
+       title = "US People",
+       fill = "Response")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-people.tiff"), height = 5, width = 7, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-people.jpg"), height = 5, width = 7, units = "in")
+
+
+
+
+#### View of American troops ####
+
+view.troops <- as.data.table(o.data)[!is.na(country) & !is.na(troops_1), troops_1, country][
+  , .N, by = .(country, troops_1)
+]
+
+troop.plot <- ggplot(view.troops, aes(x = N, y = country, fill = troops_1)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", size = 0.1) +
+  scale_x_continuous(labels = percent_format(), expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  viridis::scale_fill_viridis(discrete = TRUE, option = "magma") +
+  theme_flynn() +
+  theme(panel.border = element_blank(),
+        axis.line =  element_blank(),
+        axis.text.y.left = element_text(size = basesize*1.1),
+        panel.grid.major = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = basesize*1.1, hjust = 0, margin = margin(l = -0.3, unit = "cm")),
+        plot.margin = margin(0.5, l = 0.1, r = 0.96, 0.5, unit = "cm")) +
+  labs(x = "",
+       y = "",
+       title = "US Troops",
+       fill = "Response")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-troops.tiff"), height = 5, width = 7, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-troops.jpg"), height = 5, width = 7, units = "in")
+
+
+#### Combine attitude figures into a single figure ####
+
+view.com <- patchwork::wrap_plots(troop.plot, gov.plot, people.plot) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+# Edit plots to remove redundant axis material
+view.com[[2]] <- view.com[[2]] + theme(axis.text.y = element_blank(),
+                                       axis.ticks.y = element_blank(),
+                                       axis.title.y = element_blank()) 
+
+view.com[[3]] <- view.com[[3]] + theme(axis.text.y = element_blank(),
+                                       axis.ticks.y = element_blank(),
+                                       axis.title.y = element_blank()) 
+  
+view.com
+
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-actors-combined.tiff"), height = 5, width = 9, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-views-of-us-actors-combined.jpg"), height = 5, width = 9, units = "in")
+
+
+```
+
+```{r contact-breakdown}
+
+#### Contact/Benefit Breakdown ####
+
+contact.fig <- as.data.table(o.data)[!is.na(country) & !is.na(contact_pers) & !is.na(contact_nonpers) & !is.na(benefit_pers) & !is.na(benefit_nonpers)][
+  , melt(.SD, id.vars = "country", measure.vars =  c("contact_pers", "benefit_pers", "contact_nonpers", "benefit_nonpers"))
+][
+  , .(count = .N), by = c("country", "variable", "value")
+]
+
+contact.fig$variable <- factor(contact.fig$variable, levels = c("contact_pers", "contact_nonpers", "benefit_pers", "benefit_nonpers"), labels = c("Personal Contact", "Network Contact", "Personal Benefit", "Network Benefit"))
+
+
+ggplot(contact.fig, aes(x = count, y = country, fill = value)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", size = 0.1) +
+  facet_wrap( ~ variable, ncol = 4) +
+  scale_x_continuous(labels = percent_format(), expand = c(0, 0)) + 
+  scale_y_discrete(expand = c(0, 0)) + 
+  viridis::scale_fill_viridis(discrete = TRUE, option = "magma") +
+  theme_flynn() +
+  theme(panel.border = element_blank(),
+        axis.line =  element_blank(),
+        axis.text.y = element_text(size = basesize * 1.1),
+        axis.text.x = element_text(size = basesize * 1.05),
+        panel.grid.major = element_blank(),
+        panel.spacing = unit(1.5, "lines"),
+        strip.background = element_rect(size = 0.2),
+        legend.position = "bottom",
+        legend.text = element_text(size = basesize *1.1, margin = margin(l=-0.25, unit = "cm"))) +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  labs(x = "",
+       y = "",
+       title = "",
+       fill = "Response")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-summary.tiff"), height = 5, width = 10, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-summary.jpg"), height = 5, width = 10, units = "in")
+
+
+#### Contact and outcome breakdown figure BIG! ####
+
+getmode <- function(x) {
+  uniquex <- unique(x)
+  uniquex[which.max(tabulate(match(x, uniquex)))]
+}
+
+contact.fig.big <- as.data.table(o.data)[!is.na(country)][
+  , melt(.SD, id.vars = c("country", "american_gov", "troops_1", "american_people"), measure.vars =  c("contact_pers", "benefit_pers", "contact_nonpers", "benefit_nonpers"))
+][
+  , melt(.SD, id.vars = c("country", "variable", "value"), measure.vars = c("troops_1", "american_gov", "american_people"))
+][
+  , .(mode = getmode(value.1)), by = c("country", "variable", "variable.1", "value")
+][
+  variable != "Don't know/decline to answer" & value != "Don't know/decline to answer"
+]
+
+contact.fig.big$variable <- factor(contact.fig.big$variable, levels = c("contact_pers", "contact_nonpers", "benefit_pers", "benefit_nonpers"), labels = c("Personal Contact", "Network Contact", "Personal Benefit", "Network Benefit"))
+
+contact.fig.big$variable.1 <- factor(contact.fig.big$variable.1, levels = c("troops_1", "american_gov", "american_people"), labels = c("Troops", "Government", "People"))
+
+contact.fig.big$mode <- factor(contact.fig.big$mode, levels = c("Don't know/decline to answer", "Very unfavorable", "Somewhat unfavorable", "Neutral", "Somewhat favorable", "Very favorable"))
+
+ggplot(contact.fig.big, aes(x = value, y = country, fill = mode)) +
+  geom_tile(color = "black", size = 0.1) +
+  facet_grid(variable.1 ~ variable) +
+  theme_flynn() +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  viridis::scale_fill_viridis(discrete = TRUE, option = "magma") +
+  theme(panel.border = element_blank(),
+        axis.line =  element_blank(),
+        axis.text.y = element_text(size = basesize * 1.1),
+        panel.grid.major = element_blank(),
+        strip.background = element_rect(size = 0.2),
+        panel.spacing = unit(0.2, "cm"),
+        legend.title = element_text(size = basesize * 1.15, margin = margin(b = -0.4, unit = "cm")),
+        legend.text = element_text(size = basesize *1.1, margin = margin(l=-0.25, unit = "cm"))) +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  labs(x = "Contact or Benefit?",
+       y = "",
+       fill = "Modal Response")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-group-summary-big.tiff"), height = 8, width = 8, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-type-group-summary-big.jpg"), height = 8, width = 8, units = "in")
+
+
+```
+
+
+
+## Summary stats from descriptives
+
+```{r summary-stats}
+
+# Germany favorable responses
+
+troops.breakdown <- view.troops %>% 
+  group_by(country) %>% 
+  dplyr::mutate(positive = sum(N[grepl("Somewhat favorable|Very favorable", troops_1)])/sum(N),
+                negative = sum(N[grepl("Somewhat unfavorable|Very unfavorable", troops_1)])/sum(N),
+                neutral = sum(N[grepl("Neutral", troops_1)])/sum(N)) %>% 
+  summarise(positive = mean(positive),
+            negative = mean(negative),
+            neutral = mean(neutral)) 
+
+
+gov.breakdown <- view.gov %>% 
+  group_by(country) %>% 
+  dplyr::mutate(positive = sum(N[grepl("Somewhat favorable|Very favorable", american_gov)])/sum(N),
+                negative = sum(N[grepl("Somewhat unfavorable|Very unfavorable", american_gov)])/sum(N),
+                neutral = sum(N[grepl("Neutral", american_gov)])/sum(N)) %>% 
+  summarise(positive = mean(positive),
+            negative = mean(negative),
+            neutral = mean(neutral))
+
+people.breakdown <- view.people %>% 
+  group_by(country) %>% 
+  dplyr::mutate(positive = sum(N[grepl("Somewhat favorable|Very favorable", american_people)])/sum(N),
+                negative = sum(N[grepl("Somewhat unfavorable|Very unfavorable", american_people)])/sum(N),
+                neutral = sum(N[grepl("Neutral", american_people)])/sum(N)) %>% 
+  summarise(positive = mean(positive),
+            negative = mean(negative),
+            neutral = mean(neutral))
+
+com.breakdown <- bind_rows(troops.breakdown, gov.breakdown, people.breakdown) %>% 
+  mutate(group = rep(c("US Troops", "US Government", "US People"), each = 14),
+         group = factor(group, levels = c("US Troops", "US Government", "US People"))) %>% 
+  pivot_longer(cols = c("positive", "negative", "neutral"),
+               values_to = "value",
+               names_to = "assessment") %>% 
+  mutate(assessment = factor(assessment, levels = c("positive", "neutral", "negative"), labels = c("Favorable", "Neutral", "Unfavorable")))
+
+
+ggplot(com.breakdown %>% filter(assessment != "Neutral"), aes(x = group, y = value, group = country, fill = country)) +
+  geom_line(aes(color = country), size = 1.5, alpha = 0.7, position = position_dodge(width = .25)) +
+  geom_point(size = 5, pch = 21, color = "black", alpha = 1.0, stroke = 1.25, position = position_dodge(width = .25)) +
+  geom_text_repel(data = com.breakdown %>% filter(group == "US Troops" & assessment != "Neutral"), aes(label = country), hjust = "left", nudge_x = -0.5, nudge_y = 0.05, size = 7,  segment.curvature = 1e-20,  min.segment.length = 0.5) +
+  theme_flynn() +
+  theme(legend.position = "bottom",
+        legend.text = element_text(margin = margin(l = -0.3, unit = "cm")),
+        panel.border = element_rect(size = 0.2),
+        strip.background = element_rect(size = 0.2)) +
+  facet_grid(. ~ assessment) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_x_discrete(expand = c(0.5,0)) +
+  scale_color_viridis(discrete = TRUE, option = "plasma") +
+  scale_fill_viridis(discrete = TRUE, option = "plasma") +
+  labs(x = "",
+       y = "Percent",
+       color = "Country",
+       fill = "Country")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-contact-favorability-breakdown.tiff"), height = 6, width = 10, units = "in")
+  
+```
+
+
+
+```{r contact and benefits summary}
+
+# Generate table with percentages for different responses in different countries
+contact.percents <- contact.fig[
+  , percent := count/sum(count), by = c("country", "variable")
+][
+  , dcast(.SD, country + value ~ variable, value.var = "percent")
+][
+  value == "Yes"
+]
+
+```
+
+
+
+# Models
+
+## Priors
+
+We use the APSR paper models to generate the priors on the betas here. 
+
+```{r priors}
+
+Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
+
+
+# Get priors
+PRIOR.LIST.T <- get_prior(troops_1_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+            family = categorical(link = "logit", refcat = "neutral")) 
+
+# Default and regularizing priors
+# Use the same basic data.frame for everything
+PRIOR.LIST.REG <- PRIOR.LIST.T %>% 
+  filter(coef == "") %>% 
+  mutate(prior = case_when(
+    class == "b" ~ "normal(0,2)",
+    class == "sd" ~ "gamma(1, 1)",
+    class == "Intercept" ~ "normal(0,3)",
+    TRUE ~ prior
+  )) 
+
+
+# Informative beta Priors
+PRIOR.LIST.T <- PRIOR.LIST.T %>% 
+  filter(class == "b" & !is.na(coef) & coef != "") 
+
+apsr.t <- readRDS(here::here("../Papers/Published/Primary Paper - Contact/Bayes Diagnostics/m1.cat.bayes.rds"))
+apsr.g <- readRDS(here::here("../Papers/Published/Primary Paper - Contact/Bayes Diagnostics/m2.cat.bayes.rds"))
+apsr.p <- readRDS(here::here("../Papers/Published/Primary Paper - Contact/Bayes Diagnostics/m3.cat.bayes.rds"))
+
+
+# Troops Priors
+PRIOR.T <- empty_prior()
+
+coeflist <- as_tibble(apsr.t) %>% 
+  dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
+  pivot_longer(cols = 1:ncol(.), 
+               names_to = c("coef", ".value"),
+               names_pattern = "(.+)_(.+$)") %>% 
+  mutate(prior = glue::glue("normal({round(mean, 2)},{round(sd, 2)})"),
+         dpar = case_when(
+           grepl("mupos", coef) ~ "mupos",
+           grepl("muneg", coef) ~ "muneg",
+           grepl("mudk", coef) ~ "mudk",
+         ),
+         coef = gsub("mupos_|muneg_|mudk_", "", coef),
+         coef = gsub("knowDDe", "knowDde", coef)) %>% 
+  filter(grepl("b_", coef)) %>% 
+  mutate(coef = gsub("b_", "", coef),
+         class = "b") %>% 
+  dplyr::select(-c(mean, sd)) %>% 
+  filter(grepl(".*contact.*|.*benefit.*|.*gender.*|.*inf.*|.*age.*|.*minority.*|.*relig.*", coef)) %>% 
+  filter(!grepl(".*minorityNo.*", coef))
+
+PRIOR.T <- bind_rows(PRIOR.T, coeflist, PRIOR.LIST.REG) 
+PRIOR.T[is.na(PRIOR.T)] <- ""
+
+
+# Government Priors
+PRIOR.G <- empty_prior() 
+
+PRIOR.LIST.G <- get_prior(american_g_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + contact_pers + benefit_pers + troops_crime_pers +  american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+            family = categorical(link = "logit", refcat = "neutral")) %>% 
+  filter(class == "b" & !is.na(coef) & coef != "") 
+
+coeflist <- as_tibble(apsr.g) %>% 
+  dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
+  pivot_longer(cols = 1:ncol(.), 
+               names_to = c("coef", ".value"),
+               names_pattern = "(.+)_(.+$)") %>% 
+  mutate(prior = glue::glue("normal({round(mean, 2)},{round(sd, 2)})"),
+         dpar = case_when(
+           grepl("mupos", coef) ~ "mupos",
+           grepl("muneg", coef) ~ "muneg",
+           grepl("mudk", coef) ~ "mudk",
+         ),
+         coef = gsub("mupos_|muneg_|mudk_", "", coef),
+         coef = gsub("knowDDe", "knowDde", coef)) %>% 
+  filter(grepl("b_", coef)) %>% 
+  mutate(coef = gsub("b_", "", coef),
+         class = "b") %>% 
+  dplyr::select(-c(mean, sd)) %>% 
+  filter(grepl(".*contact.*|.*benefit.*|.*gender.*|.*inf.*|.*age.*|.*minority.*|.*relig.*", coef)) %>% 
+  filter(!grepl(".*minorityNo.*", coef))
+
+PRIOR.G <- bind_rows(PRIOR.G, PRIOR.LIST.REG, coeflist) 
+PRIOR.G[is.na(PRIOR.G)] <- ""
+
+
+
+
+# People Priors
+PRIOR.P <- empty_prior()
+
+PRIOR.LIST.P <- get_prior(american_p_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + contact_pers + benefit_pers + troops_crime_pers +  american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + 
+            (1 |r| country),
+                    data = o.data,
+            family = categorical(link = "logit", refcat = "neutral")) %>% 
+  filter(class == "b" & !is.na(coef) & coef != "") 
+
+coeflist <- as_tibble(apsr.p) %>% 
+  dplyr::summarise_all(list(mean = mean, sd = sd)) %>% 
+  pivot_longer(cols = 1:ncol(.), 
+               names_to = c("coef", ".value"),
+               names_pattern = "(.+)_(.+$)") %>% 
+  mutate(prior = glue::glue("normal({round(mean, 2)},{round(sd, 2)})"),
+         dpar = case_when(
+           grepl("mupos", coef) ~ "mupos",
+           grepl("muneg", coef) ~ "muneg",
+           grepl("mudk", coef) ~ "mudk",
+         ),
+         coef = gsub("mupos_|muneg_|mudk_", "", coef),
+         coef = gsub("knowDDe", "knowDde", coef)) %>% 
+  filter(grepl("b_", coef)) %>% 
+  mutate(coef = gsub("b_", "", coef),
+         class = "b") %>% 
+  dplyr::select(-c(mean, sd)) %>% 
+  filter(grepl(".*contact.*|.*benefit.*|.*gender.*|.*inf.*|.*age.*|.*minority.*|.*relig.*", coef)) %>% 
+  filter(!grepl(".*minorityNo.*", coef))
+
+PRIOR.P <- bind_rows(PRIOR.P, PRIOR.LIST.REG, coeflist) 
+PRIOR.P[is.na(PRIOR.P)] <- ""
+
+
+```
+
+
+## Models
+
+### Population level effects
+
+```{r troops}
+
+job::job(import = "auto", "m.c.t1" = {
+
+  Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
+
+ITER <- 6000
+WARMUP <-  3000
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+#### Troops  ####
+
+m.c.t1 <- brm(troops_1_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + (1 |r| country),
+              family = categorical(link = "logit", refcat = "neutral"),
+              data = o.data,
+              prior = PRIOR.T,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              thin = 1,
+              seed = SEED,
+              control = list(adapt_delta = 0.80,
+                             max_treedepth = 10),
+              backend = "cmdstanr",
+              file_refit = "on_change",
+              file = here::here("Output/Chapter-Contact/m.c.t1"))
+
+})
+```
+
+```{r people}
+
+#### People ####
+
+job::job(import = "auto", packages = c("brms", "here"), m.c.p1 = {
+
+Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
+
+ITER <- 6000
+WARMUP <-  3000
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+m.c.p1 <- brms::brm(american_p_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + (1 |r| country),
+              family = categorical(link = "logit", refcat = "neutral"),
+              data = o.data,
+              prior = PRIOR.P,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              thin = 1,
+              seed = SEED,
+              control = list(adapt_delta = 0.80,
+                             max_treedepth = 10),
+              backend = "cmdstanr",
+              file_refit = "on_change",
+              file = here::here("Output/Chapter-Contact/m.c.p1"))
+
+}
+)
+
+```
+
+
+```{r government}
+
+#### Government ####
+
+job::job(import = "auto", m.c.g1 = {
+
+  Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
+
+ITER <- 6000
+WARMUP <-  3000
+CORES <- 4
+CHAINS <- 4
+SEED <- 123
+
+
+m.c.g1 <- brms::brm(american_g_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + (1 |r| country),
+              family = categorical(link = "logit", refcat = "neutral"),
+              data = o.data,
+              prior = PRIOR.G,
+              iter = ITER,
+              warmup = WARMUP,
+              cores = CORES,
+              chains = CHAINS,
+              thin = 1,
+              seed = SEED,
+              control = list(adapt_delta = 0.80,
+                             max_treedepth = 10),
+              backend = "cmdstanr",
+              file_refit = "on_change",
+              file = here::here("Output/Chapter-Contact/m.c.g1"))
+
+})
+
+```
+
+### Varying effects 
+
+```{r troops}
+
+job::job(import = "auto", "m.c.t2" = {
+  
+  Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
+  
+  ITER <- 6000
+  WARMUP <-  3000
+  CORES <- 8
+  CHAINS <- 4
+  SEED <- 123
+  
+  #### Troops  ####
+  
+  m.c.t2 <- brm(troops_1_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + (1 + contact_pers + contact_nonpers + benefit_pers + benefit_nonpers |r| country),
+                family = categorical(link = "logit", refcat = "neutral"),
+                data = o.data,
+                prior = PRIOR.T,
+                iter = ITER,
+                warmup = WARMUP,
+                cores = CORES,
+                chains = CHAINS,
+                threads = threading(threads = 2),
+                thin = 1,
+                seed = SEED,
+                refresh = 10,
+                control = list(adapt_delta = 0.80,
+                               max_treedepth = 10),
+                backend = "cmdstanr",
+                file_refit = "on_change",
+                file = here::here("Output/Chapter-Contact/m.c.t2"))
+  
+})
+```
+
+```{r people}
+
+#### People ####
+
+job::job(import = "auto", packages = c("brms", "here"), m.c.p2 = {
+  
+  Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
+  
+  ITER <- 5000
+  WARMUP <-  2500
+  CORES <- 8
+  CHAINS <- 4
+  SEED <- 123
+  
+  m.c.p2 <- brms::brm(american_p_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + (1 + contact_pers + contact_nonpers + benefit_pers + benefit_nonpers |r| country),
+                      family = categorical(link = "logit", refcat = "neutral"),
+                      data = o.data,
+                      prior = PRIOR.P,
+                      iter = ITER,
+                      warmup = WARMUP,
+                      cores = CORES,
+                      chains = CHAINS,
+                      threads = threading(2),
+                      thin = 1,
+                      seed = SEED,
+                      refresh = 10,
+                      control = list(adapt_delta = 0.80,
+                                     max_treedepth = 10),
+                      backend = "cmdstanr",
+                      file_refit = "on_change",
+                      file = here::here("Output/Chapter-Contact/m.c.p2"))
+  
+}
+)
+
+```
+
+
+```{r government}
+
+#### Government ####
+
+job::job(import = "auto", m.c.g2 = {
+  
+  Sys.setlocale('LC_ALL','C') # Have to add this for Mac for some reason?
+  
+  ITER <- 6000
+  WARMUP <-  3000
+  CORES <- 8
+  CHAINS <- 4
+  SEED <- 123
+  
+  
+  m.c.g2 <- brms::brm(american_g_cat ~ contact_pers + contact_nonpers + benefit_pers + benefit_nonpers + age + ed_z + ideology_z + income.5.cat + gender + minority + relig + troops_crime_pers + american_inf_1 + american_inf_2 + basecount_z + gdp_z + pop_z + troops_z + (1 + contact_pers + contact_nonpers + benefit_pers + benefit_nonpers |r| country),
+                      family = categorical(link = "logit", refcat = "neutral"),
+                      data = o.data,
+                      prior = PRIOR.G,
+                      iter = ITER,
+                      warmup = WARMUP,
+                      cores = CORES,
+                      chains = CHAINS,
+                      threads = threading(threads = 2),
+                      refresh = 10,
+                      thin = 1,
+                      seed = SEED,
+                      control = list(adapt_delta = 0.80,
+                                     max_treedepth = 10),
+                      backend = "cmdstanr",
+                      file_refit = "on_change",
+                      save_pars = save_pars(all = TRUE),
+                      save_model = here::here("Code/Chapter-Contact/m.c.g2.stan"),
+                      file = here::here("Output/Chapter-Contact/m.c.g2"))
+  
+})
+
+```
+
+
+# Post-Estimation
+
+## Load Model Files
+
+```{r load-files}
+
+m.c.t1 <- readRDS(here::here("Output/Chapter-Contact/m.c.t1.rds"))
+m.c.p1 <- readRDS(here::here("Output/Chapter-Contact/m.c.p1.rds"))
+m.c.g1 <- readRDS(here::here("Output/Chapter-Contact/m.c.g1.rds"))
+
+
+mod.list <- list(" " = m.c.t1,
+                 " " = m.c.p1,
+                 " " = m.c.g1)
+
+for (i in seq_along(mod.list)){
+  class(mod.list[[i]]) <- c("custom", class(mod.list[[i]]))
+}
+```
+
+
+
+# Tables
+
+
+```{r tables}
+
+#### Troops Tables ####
+
+# tidy method extracts level names into new column
+tidy.custom <- function(x, conf.level=.95, ...) {
+  out = parameters::parameters(x, ci=conf.level, verbose=FALSE) %>%
+        parameters::standardize_names(style="broom") %>%
+        mutate(y.level = case_when(grepl("mudk", term) ~ "Don't Know",
+                                 grepl("muneg", term) ~ "Negative",
+                                 grepl("mupos", term) ~ "Positive"),
+               term = gsub("dk|neg|pos", "", term)) # remove outcome prefix brms attaches to variable names
+  return(out)
+}
+
+glance.custom <- function(x, ...) {
+  ret <- tibble::tibble(N = summary(x)$nobs)
+  ret
+}
+
+rows <- tribble(~term, ~col1, ~col2, ~col3, ~col4, ~col5, ~col6, ~col7, ~col8, ~col9,
+                "N", as.character(summary(mod.list[[1]])[[4]]), "", "", as.character(summary(mod.list[[2]])[[4]]), "", "", as.character(summary(mod.list[[3]])[[4]]), "", "",
+                "Group", "Country", "", "", "Country", "", "", "Country", "", "",
+                "# Groups", as.character(summary(mod.list[[1]])[[5]]), "", "", as.character(summary(mod.list[[2]])[[5]]), "", "", as.character(summary(mod.list[[3]])[[5]]), "", "",
+                "sd(Intercept, Don't know)", as.character(round(summary(mod.list[[1]])[[17]][[1]][[1]], 3)), "", "", as.character(round(summary(mod.list[[2]])[[17]][[1]][[1]], 3)), "", "", as.character(round(summary(mod.list[[3]])[[17]][[1]][[1]], 3)), "", "",
+                "sd(Intercept, Negative)", as.character(round(summary(mod.list[[1]])[[17]][[1]][[2]], 3)), "", "", as.character(round(summary(mod.list[[2]])[[17]][[1]][[2]], 3)), "", "", as.character(round(summary(mod.list[[3]])[[17]][[1]][[2]], 3)), "", "",
+                "sd(Intercept, Positive)", as.character(round(summary(mod.list[[1]])[[17]][[1]][[3]], 3)), "", "", as.character(round(summary(mod.list[[2]])[[17]][[1]][[3]], 3)), "", "", as.character(round(summary(mod.list[[3]])[[17]][[1]][[3]], 3)), "", "",
+                "cor(mudk_Intercept,muneg_Intercept)", as.character(round(summary(mod.list[[1]])[[17]][[1]][[4]], 3)), "", "", as.character(round(summary(mod.list[[2]])[[17]][[1]][[4]], 3)), "", "", as.character(round(summary(mod.list[[3]])[[17]][[1]][[4]], 3)), "", "",
+                "cor(mudk_Intercept,mupos_Intercept)", as.character(round(summary(mod.list[[1]])[[17]][[1]][[5]], 3)), "", "", as.character(round(summary(mod.list[[2]])[[17]][[1]][[5]], 3)), "", "", as.character(round(summary(mod.list[[3]])[[17]][[1]][[5]], 3)), "", "",
+                "cor(muneg_Intercept,mupos_Intercept)", as.character(round(summary(mod.list[[1]])[[17]][[1]][[6]], 3)), "", "", as.character(round(summary(mod.list[[2]])[[17]][[1]][[6]], 3)), "", "", as.character(round(summary(mod.list[[3]])[[17]][[1]][[6]], 3)), "", "")
+
+
+
+gof.check <- modelsummary::gof_map
+gof.check$omit <- TRUE
+
+coef.list <- c("b_mu_contact_persYes" = "Personal Contact: Yes",
+               "b_mu_contact_persDontknowDdeclinetoanswer" = "Personal Contact: DK/Decline",
+               "b_mu_contact_nonpersYes" = "Network Contact: Yes",
+               "b_mu_contact_nonpersDontknowDdeclinetoanswer" = "Network Contact: DK/Decline",
+               "b_mu_benefit_persYes" = "Personal Benefit: Yes",
+               "b_mu_benefit_persDontknowDdeclinetoanswer" = "Personal Benefit: DK/Decline",
+               "b_mu_benefit_nonpersYes" = "Network Benefit: Yes",
+               "b_mu_benefit_nonpersDontknowDdeclinetoanswer" = "Network Benefit: DK/Decline",
+               "b_mu_age25to34years" = "25-34",
+               "b_mu_age35to44years" = "35-44",
+               "b_mu_age45to54years" = "45-54",
+               "b_mu_age55to64years" = "55-65",
+               "b_mu_ageAge65orolder" = ">65",
+               "b_mu_income.5.cat21M40." = "21-40",
+               "b_mu_income.5.cat41M60." = "41-60",
+               "b_mu_income.5.cat61M80." = "61-80",
+               "b_mu_income.5.cat81M100." = "81-100",
+               "b_mu_genderFemale" = "Female",
+               "b_mu_genderNonMbinary" = "Non-binary",
+               "b_mu_genderNoneoftheabove" = "None of the above",
+               "b_mu_minorityYes" = "Minority: Yes",
+               "b_mu_minorityDeclinetoanswer" = "Minoriy: Decline to answer",
+               "b_mu_religCatholicism" = "Catholic",
+               "b_mu_religChristianityprotestant" = "Protestant",
+               "b_mu_religBuddhism" = "Buddhism",
+               "b_mu_religHinduism" = "Hindu",
+               "b_mu_religIslam" = "Islam",
+               "b_mu_religJudaism" = "Judaism",
+               "b_mu_religShinto" = "Shinto",
+               "b_mu_religMormonism" = "Mormonism",
+               "b_mu_religLocal" = "Local Religion",
+               "b_mu_religOther" = "Other",
+               "b_mu_religDeclinetoanswer" = "Religion: Decline to answer",
+               "b_mu_ed_z" = "Education",
+               "b_mu_ideology_z" = "Ideology",
+               "b_mu_troops_crime_persYes" = "Personal Crime Experience: Yes",
+               "b_mu_american_inf_1DontknowDdeclinetoanswer" = "Influence 1: DK/Decline",
+               "b_mu_american_inf_1Alittle" = "Influence 1: A little",
+               "b_mu_american_inf_1Some" = "Influence 1: Some",
+               "b_mu_american_inf_1Alot" = "Influence 1: A lot",
+               "b_mu_american_inf_2DontknowDdeclinetoanswer" = "Influence 2: DK/Decline",
+               "b_mu_american_inf_2Veryative" = "Influence 2: Very negative",
+               "b_mu_american_inf_2Negative" = "Influence 2: Negative",
+               "b_mu_american_inf_2Positive" = "Influence 2: Positive",
+               "b_mu_american_inf_2Veryitive" = "Influence 2: Very positive",
+               "b_mu_basecount_z" = "Base count",
+               "b_mu_gdp_z" = "GDP",
+               "b_mu_pop_z" = "Population",
+               "b_mu_troops_z" = "Troop deployment size",
+               "b_mu_Intercept" = "Intercept")
+
+
+panel.1 <- modelsummary::modelsummary(mod.list,
+                  estimate = "{estimate}",
+                  statistic = "conf.int",
+                  fmt = 2,
+                  group = term ~ model + y.level,
+                  gof_map = gof.check,
+                  coef_map = coef.list,
+                  stars = FALSE,
+                  longtable = TRUE,
+                  output = "latex",
+                  caption = "Bayesian multilevel multinomial logistic regressions \\label{tab:contactfull}") %>% 
+  kable_styling(latex_options = c("striped", "scale_down", "repeat_header"), protect_latex = TRUE, font_size = 7, position = "left",
+                stripe_index = c(1:2, 5:6, 9:10, 13:14, 17:18, 21:22, 25:26, 29:30, 33:34, 37:38, 41:42, 45:46, 49:50, 53:54, 57:58, 61:62, 65:66, 69:70, 73:74, 77:78, 81:82, 85:86, 89:90, 93:94, 97:98)) %>%
+  add_header_above(c(" ", "U.S. Troops" = 3, "U.S. People" = 3, "U.S. Government" = 3)) %>% 
+  pack_rows("Contact Status", 1, 8, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Economic Benefits", 9, 16, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Age", 17, 26, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Income Quantile", 27, 34, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Gender Identification", 35, 40, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Minority Status", 41, 44, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Religious Identification", 45, 66, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Education", 67, 68, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Ideology", 69, 70, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Personal Experience with Crime", 71, 72, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Amount of U.S. Influence", 73, 80, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Quality of U.S. Influence", 81, 90, bold = TRUE, background = "gray", color = "white") %>% 
+  pack_rows("Group-level Variables", 91, 98, bold = TRUE, background = "gray", color = "white") %>%
+  row_spec(100, hline_after = TRUE) %>% 
+  landscape() %>% 
+  save_kable(here("Tables/Chapter-Contact/model-contact-full.tex"),
+             keep_tex = TRUE)
+
+```
+
+# Figures
+
+## Posterior Checks
+
+```{r}
+
+
+check.t <- brms::pp_check(m.c.t1, nsamples = 1000, type = "bars_grouped", group = "country") +
+  theme_flynn() 
+
+check.t
+
+check.p <- brms::pp_check(m.c.p1, nsamples = 1000, type = "bars_grouped", group = "country") +
+  theme_flynn()
+
+check.p
+
+check.g <- brms::pp_check(m.c.g1, nsamples = 1000, type = "bars_grouped", group = "country") +
+  theme_flynn()
+
+check.g
+
+
+tib = tibble::tibble(x = rnorm(1000, 0, 2),
+             y = rnorm(1000, 3, 1))
+
+p1 <- ggplot(tib, aes(x = x, y = y)) +
+  geom_point()  +
+theme_flynn()
+
+p1 <- ggtrack(p1, 
+        qr_content = paste0('Data accessed using R package:'),
+        height_plot = 20)
+
+p1
+```
+
+
+## Coefficient plots for models
+
+### Population Effects 
+
+```{r contact coefficients}
+
+# Read in model files
+m.c.t1 <- readRDS(here::here("Output/Chapter-Contact/m.c.t1.rds"))
+m.c.p1 <- readRDS(here::here("Output/Chapter-Contact/m.c.p1.rds"))
+m.c.g1 <- readRDS(here::here("Output/Chapter-Contact/m.c.g1.rds"))
+
+mod.list <- list("US Troops" = m.c.t1,
+                 "US People" = m.c.p1,
+                 "US Government" = m.c.g1)
+
+coef.plot <- lapply(mod.list, function(x) {
+  
+  df <- tidybayes::gather_draws(x, 
+                          b_mupos_contact_persYes,
+                          b_muneg_contact_persYes,
+                          b_mudk_contact_persYes,
+                          b_mupos_contact_nonpersYes,
+                          b_muneg_contact_nonpersYes,
+                          b_mudk_contact_nonpersYes,
+                          b_mupos_benefit_persYes,
+                          b_muneg_benefit_persYes,
+                          b_mudk_benefit_persYes,
+                          b_mupos_benefit_nonpersYes,
+                          b_muneg_benefit_nonpersYes,
+                          b_mudk_benefit_nonpersYes) 
+  
+  df %>% 
+    dplyr::mutate(dv.response = case_when(
+      grepl("mupos", .variable) ~ "Positive",
+      grepl("muneg", .variable) ~ "Negative",
+      grepl("mudk", .variable) ~ "Don't know/Decline"
+    ),
+    iv.response = case_when(
+      grepl("Yes", .variable) ~ "Yes",
+      grepl("DontknowDdeclinetoanswer", .variable) ~ "Don't know/Decline"
+    ),
+    iv = case_when(
+      grepl("contact_pers", .variable) ~ "Personal Contact",
+      grepl("contact_nonpers", .variable) ~ "Network Contact",
+      grepl("benefit_pers", .variable) ~ "Personal Benefit",
+      grepl("benefit_nonpers", .variable) ~ "Network Benefit",
+    ),
+    iv = factor(iv, levels = c("Personal Contact", "Network Contact", "Personal Benefit", "Network Benefit")),
+    dv.response = factor(dv.response, levels = c("Positive", "Negative", "Don't know/Decline")),
+    comparison = "Posterior",
+    id = glue::glue("{iv}, {iv.response}, {dv.response}")
+  ) %>% 
+    dplyr::group_by(id) %>% 
+    mutate(direction = case_when(
+      median(.value) > 0 ~ "Positive",
+      median(.value) < 0 ~ "Negative"
+    ),
+    median = median(.value),
+    posterior.positive = round(length(.value[.value>0])/length(.value), 3),
+    posterior.negative = round(length(.value[.value<0])/length(.value), 3)
+    )
+  
+  }
+  )
+
+coef.plot <- rbindlist(coef.plot, idcol = TRUE) %>% 
+  mutate(.id = factor(.id, levels = c("US Troops", "US Government", "US People"))) %>% 
+  filter(iv.response == "Yes")
+
+ggplot(coef.plot, aes(x = .value, y = iv.response, color = dv.response)) +
+  stat_pointinterval(.width = c(0.5, 0.8, 0.95), position = position_dodge(width = 0.60), interval_size_range = c(1, 3, 5), fatten_point = 1.3) +
+  geom_vline(xintercept = 0, color = "black", size = 0.75) +
+  facet_grid(iv ~ .id) +
+  theme_flynn() +
+  theme(legend.position = "bottom",
+        panel.spacing = unit(0.25, "line"),
+        axis.text.x = element_text(size = basesize * 1.1),
+        axis.text.y = element_text(size = basesize * 1.1),
+        axis.title = element_text(size = basesize * 1.1),
+        legend.title = element_text(size = basesize * 1.1),
+        legend.text = element_text(size = basesize * 1.1),
+        strip.text = element_text(size = basesize * 1.1)) +
+  scale_color_viridis(discrete = TRUE, begin = 0.1, end = 0.9, option = "magma") +
+  labs(x = "Coefficient Estimate",
+       y = "Independent Variable Response",
+       color = "Assessment of Reference Group")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-plot.tiff"),  height = 7, width = 8, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-plot.jpg"),  height = 7, width = 8, units = "in")
+
+```
+
+
+
+```{r prior comparison plot}
+
+prior.df.list <- list("US Troops" = PRIOR.T,
+                      "US Government" = PRIOR.G,
+                      "US People" = PRIOR.P)
+
+prior.df <- rbindlist(prior.df.list, idcol = TRUE) %>% 
+  dplyr::filter(grepl("contact_|benefit_", coef)) %>% 
+  dplyr::filter(grepl("Yes", coef)) %>% 
+  tidyr::separate(prior, into = c("mean", "sd"), sep = ",") %>% 
+  dplyr::mutate(mean = gsub("normal\\(", "", mean),
+                sd = gsub("\\)", "", sd),
+                iv = case_when(
+      grepl("contact_pers", coef) ~ "Personal Contact",
+      grepl("contact_nonpers", coef) ~ "Network Contact",
+      grepl("benefit_pers", coef) ~ "Personal Benefit",
+      grepl("benefit_nonpers", coef) ~ "Network Benefit"),
+      dv.response = case_when(
+      grepl("mupos", dpar) ~ "Positive",
+      grepl("muneg", dpar) ~ "Negative",
+      grepl("mudk", dpar) ~ "Don't know/Decline"
+    ),
+    iv.response = case_when(
+      grepl("Yes", coef) ~ "Yes",
+      grepl("DontknowDdeclinetoanswer", coef) ~ "Don't know/Decline"
+    ),
+    mean = as.numeric(mean),
+    sd = as.numeric(sd)) %>% 
+  dplyr::select(.id, mean, sd, iv, dv.response, iv.response) %>% 
+  dplyr::rowwise() %>% 
+  dplyr::mutate(.value = list(rnorm(1e4, mean = mean, sd = sd))) %>% 
+  unnest() %>% 
+  mutate(comparison = "Prior")
+
+prior.compare <- bind_rows(prior.df, coef.plot) %>% 
+  dplyr::filter(iv.response == "Yes") %>% 
+  dplyr::mutate(comparison = factor(comparison, levels = c("Prior", "Posterior")),
+                reference.group = glue::glue("{dv.response}, {comparison}"),
+                reference.group = factor(reference.group, levels = c("Don't know/Decline, Posterior",
+                                                                     "Don't know/Decline, Prior",
+                                                                     "Negative, Posterior",
+                                                                     "Negative, Prior",
+                                                                     "Positive, Posterior",
+                                                                     "Positive, Prior"
+                                                                     )),
+                .id = factor(.id, levels = c("US Troops", "US Government", "US People")),
+                iv = factor(iv, levels = c("Personal Contact", "Network Contact", "Personal Benefit", "Network Benefit")))
+  
+
+ggplot(prior.compare) +
+  ggdist::stat_pointinterval(aes(x = .value, color = dv.response, group = reference.group, point_size = comparison), .width = c(0.5, 0.8, 0.95), interval_size_range = c(1, 3, 5), fatten_point = 1, position = position_dodge(width = 0.5)) +
+  geom_vline(xintercept = 0, color = "black", size = 0.75) +
+  facet_grid(iv ~ .id) +
+  theme_flynn() +
+  theme(axis.text.y.left = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.spacing = unit(0.25, "line"),
+        legend.position = "bottom") +
+  guides(color = guide_legend(reverse = TRUE),
+         size = "none") +
+  scale_point_size_discrete(range = c(8, 4), guide = FALSE) +
+  scale_color_viridis(discrete = TRUE, begin = 0.1, end = 0.9, option = "magma") +
+  labs(x = "Prior/Posterior Value",
+       y = "",
+       color = "Assessment of Reference Group")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-prior-comparison.tiff"),  height = 9, width = 9, units = "in")
+ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-prior-comparison.jpg"),  height = 9, width = 9, units = "in")
+
+
+```
+
+```{r posterior percent table}
+
+# Read in model files
+m.c.t1 <- readRDS(here::here("Output/Chapter-Contact/m.c.t1.rds"))
+m.c.p1 <- readRDS(here::here("Output/Chapter-Contact/m.c.p1.rds"))
+m.c.g1 <- readRDS(here::here("Output/Chapter-Contact/m.c.g1.rds"))
+
+mod.list <- list("US Troops" = m.c.t1,
+                 "US People" = m.c.p1,
+                 "US Government" = m.c.g1)
+
+
+posterior.table <- lapply(mod.list, function(x) {
+  temp <- parameters::parameters(x) %>% 
+    filter(grepl(".*contact.*|.*benefit.*", Parameter)) %>% 
+    filter(grepl(".*Yes.*", Parameter)) %>% 
+    filter(!grepl(".*dk.*", Parameter)) %>%  # Remove don't know outcomes
+    dplyr::select(Parameter, Median, CI_low, CI_high, pd)
+  
+}
+)
+
+posterior.table.df <- rbindlist(posterior.table, idcol = TRUE) %>% 
+  dplyr::mutate(id = factor(row_number()),
+                `People Who Report` = case_when(
+                  grepl(".*contact_pers.*", Parameter) ~ "Personal Contact",
+                  grepl(".*contact_nonpers.*", Parameter) ~ "Network Contact",
+                  grepl(".*benefit_pers.*", Parameter) ~ "Personal Benefits",
+                  grepl(".*benefit_nonpers.*", Parameter) ~ "Network Benefits"
+                ),
+                `Have a` = case_when(
+                  Median > 0 ~ "Higher Probability of",
+                  Median < 0 ~ "Lower Probability of"
+                ),
+                `Expressing` = case_when(
+                  grepl(".*mupos.*", Parameter) ~ "Favorable Attitudes",
+                  grepl(".*muneg.*", Parameter) ~ "Unfavorable Attitudes",
+                ),
+                Median = sprintf('%.2f', round(Median, 2)),
+                CI_low = sprintf('%.2f', round(CI_low, 2)),
+                CI_high = sprintf('%.2f', round(CI_high, 2)),
+                pd = round(pd, 2),
+                `Interval` = glue::glue("[{CI_low}, {CI_high}]")) %>% 
+  dplyr::rename("Probability" = "pd") %>% 
+  dplyr::select(`Probability`, `People Who Report`, `Have a`, `Expressing`, .id, `Median`, `Interval`) %>% 
+  mutate(id = factor(row_number()))
+  
+# Create figures for sparkplot thing
+for(i in 1:24) {
+  
+  id <- i
+
+  p <- ggplot(posterior.table.df %>% filter(id == i), aes(x = Probability, y = id)) +
+      geom_bar(stat = "identity", fill = "gray30") +
+      geom_text(aes(label = glue::glue("{Probability*100}%")), color = "white", hjust = 1.3, size = 18) +
+    geom_vline(xintercept = 0, size = 1.5) +
+    geom_vline(xintercept = 1, size = 1.5) +
+      scale_x_continuous(limits = c(0, 1), expand = c(0, 0)) +
+      theme_void() +
+    theme(plot.background = element_rect(fill = "white", size = 0))
+    ggsave(p, filename = glue::glue("sparkplot-{id}.jpg"), path = here::here("Figures/Chapter-Contact/"), height = 0.45, width = 4)
+}
+
+
+posterior.table.df <- posterior.table.df %>% 
+  mutate(Probability = paste0("\\raisebox{-.25\\height}{\\includegraphics[width=2.5cm]{../Figures/Chapter-Contact/sparkplot-", id, ".jpg}}")) %>% 
+  arrange(id, `People Who Report`) %>% 
+  dplyr::select(-c(.id, id))
+
+posterior.table.out <- posterior.table.df %>% 
+  kable(format = "latex", booktabs = TRUE, align = c("l","l","l","l", "c", "c"), caption = "Summary of posterior estimates for contact models \\label{tab:contactposteriordistribution}", escape = FALSE) %>% 
+  kable_styling(latex_options = c("striped"), protect_latex = TRUE, font_size = 7, position = "center") %>% 
+  row_spec(0, bold = TRUE) %>%
+  pack_rows("Attitudes Towards US Troops", 1,8, color = "white", background = "gray") %>% 
+  pack_rows("Attitudes Towards US Government", 9,16, color = "white", background = "gray") %>% 
+  pack_rows("Attitudes Towards US People", 17,24, color = "white", background = "gray") %>% 
+  footnote(number = c("\\\\scriptsize Results are from the population-level effects of the three multilevel categorical logit models predicting attitudes towards US military personnel deployed to the host state, the US government, and the American people. All comparisons are relative to people who report not having personal or network contacts or benefits. Reference category for the outcome variable is the 'Neutral' attitude response.",
+                      "The probability column denotes the percentage of the posterior distribution that falls above or below 0.",
+                      "Median and interval values are the median coefficient estimate for the individual logit equations reported on the log-odds scale and 95 percent credible intervals.",
+                      "Main predictor variables indicate whether the respondents reported that they, or someone they know, had direct personal contact with US military personnel, or received economic benefits from the US military presence."),
+           fixed_small_size = TRUE,
+           footnote_as_chunk = FALSE,
+           threeparttable = TRUE,
+           escape = FALSE) %>% 
+  landscape() %>% 
+  save_kable(., file = here("Tables/Chapter-Contact/model-posterior-table.tex"),
+             keep_tex = TRUE)
+
+
+
+```
+
+
+### Varying Effects
+
+
+```{r contact coefficients}
+
+# Read in model files
+m.c.t2 <- readRDS(here::here("Output/Chapter-Contact/m.c.t2.rds"))
+m.c.p2 <- readRDS(here::here("Output/Chapter-Contact/m.c.p2.rds"))
+m.c.g2 <- readRDS(here::here("Output/Chapter-Contact/m.c.g2.rds"))
+
+mod.list <- list("US Troops" = m.c.t2,
+                 "US People" = m.c.p2,
+                 "US Government" = m.c.g2)
+
+
+coef.plot <- lapply(mod.list, function(x) {
+  
+  df.pos <- tidybayes::spread_draws(x, cbind(
+                              b_mupos_contact_persYes,
+                              b_mupos_contact_nonpersYes,
+                              b_mupos_benefit_persYes,
+                              b_mupos_benefit_nonpersYes),
+                              r_country__mupos[country,mupos_contact_persYes]) %>%
+    dplyr::filter(grepl("Yes", mupos_contact_persYes)) %>% 
+    pivot_wider(id_cols = c(1:8),
+                names_from = mupos_contact_persYes,
+                values_from = r_country__mupos) %>% 
+    mutate(contact_pers_pos = b_mupos_contact_persYes + contact_persYes,
+           contact_nonpers_pos = b_mupos_contact_nonpersYes + contact_nonpersYes,
+           benefit_pers_pos = b_mupos_benefit_persYes + benefit_persYes,
+           benefit_nonpers_pos = b_mupos_benefit_nonpersYes + benefit_nonpersYes) %>% 
+    dplyr::select(8,13:16) %>% 
+    pivot_longer(cols = c(2:5),
+                 names_to = "variable",
+                 values_to = ".value") %>% 
+    mutate(dv.response = "Positive Assessments")
+  
+    df.neg <- tidybayes::spread_draws(x, cbind(
+                              b_muneg_contact_persYes,
+                              b_muneg_contact_nonpersYes,
+                              b_muneg_benefit_persYes,
+                              b_muneg_benefit_nonpersYes),
+                              r_country__muneg[country,muneg_contact_persYes]) %>%
+  dplyr::filter(grepl("Yes", muneg_contact_persYes)) %>% 
+  pivot_wider(id_cols = c(1:8),
+              names_from = muneg_contact_persYes,
+              values_from = r_country__muneg) %>% 
+  mutate(contact_pers_neg = b_muneg_contact_persYes + contact_persYes,
+         contact_nonpers_neg = b_muneg_contact_nonpersYes + contact_nonpersYes,
+         benefit_pers_neg = b_muneg_benefit_persYes + benefit_persYes,
+         benefit_nonpers_neg = b_muneg_benefit_nonpersYes + benefit_nonpersYes) %>% 
+  dplyr::select(8,13:16) %>% 
+  pivot_longer(cols = c(2:5),
+               names_to = "variable",
+               values_to = ".value") %>% 
+      mutate(dv.response = "Negative Assessments")
+    
+    df.com <- bind_rows(df.pos, df.neg) 
+  
+}
+)
+
+coef.plot.df <- rbindlist(coef.plot, idcol = TRUE) %>% 
+  mutate(.id = factor(.id, levels = c("US Troops", "US Government", "US People")),
+         variable = gsub("_pos|_neg", "", variable),
+         variable = factor(variable, levels = c("benefit_nonpers", "benefit_pers", "contact_nonpers", "contact_pers"),
+                           labels = c("Network Benefit", "Personal Benefit", "Network Contact", "Personal Contact")),
+         dv.response = factor(dv.response, levels = c("Positive Assessments", "Negative Assessments")),
+         country = sub("\\.", " ", country))
+
+
+# Generate summary list of the medians to compare to the coef output and the figure to make sure stuff is right.
+coef.plot.summary <- coef.plot.df %>% 
+  dplyr::group_by(.id, country, variable, dv.response) %>% 
+  median_hdci()
+
+ggplot(coef.plot.df, aes(x = .value, y = country, color = variable)) +
+  stat_pointinterval(.width = c(0.5, 0.8, 0.95), position = position_dodge(width = 0.75), interval_size_range = c(1, 2, 3), fatten_point = 1.2) +
+  geom_vline(xintercept = 0, color = "black", size = 0.75) +
+  facet_grid(dv.response ~ .id) +
+  theme_flynn() +
+  theme(legend.position = "bottom",
+        panel.spacing = unit(0.25, "line")) +
+  guides(color = guide_legend(reverse = TRUE, nrow = 2)) +
+  scale_color_viridis(discrete = TRUE, begin = 0.1, end = 0.9, option = "magma") +
+  labs(x = "Country Coefficient Estimate",
+       y = "",
+       color = "Contact/Benefit Type")
+
+ggsave(here::here("Figures/Chapter-Contact/figure-coefficient-plot-varying.tiff"), height = 13, width = 8, units = "in", device = grDevices::png)
+
+
+
+```
+
+
+```{r ranef-plot}
+
+# Read in model files
+m.c.t2 <- readRDS(here::here("Output/Chapter-Contact/m.c.t2.rds"))
+m.c.p2 <- readRDS(here::here("Output/Chapter-Contact/m.c.p2.rds"))
+m.c.g2 <- readRDS(here::here("Output/Chapter-Contact/m.c.g2.rds"))
+
+mod.list <- list("US Troops" = m.c.t2,
+                 "US People" = m.c.p2,
+                 "US Government" = m.c.g2)
+
+ranef.plot <- lapply(mod.list, function(x){
+  
+  ranef.pos <- tidybayes::spread_draws(x,
+                                       r_country__mupos[country,mupos_contact_persYes]) %>% 
+    dplyr::filter(grepl("Yes", mupos_contact_persYes)) %>% 
+    dplyr::mutate(dv.response = "Positive Assessments") %>% 
+    dplyr::rename("variable" = "mupos_contact_persYes", ".value" = "r_country__mupos")
+
+  ranef.neg <- tidybayes::spread_draws(x,
+                                       r_country__muneg[country,muneg_contact_persYes]) %>% 
+    dplyr::filter(grepl("Yes", muneg_contact_persYes)) %>% 
+    dplyr::mutate(dv.response = "Negative Assessments") %>% 
+    dplyr::rename("variable" = "muneg_contact_persYes", ".value" = "r_country__muneg")
+  
+  ranef.com <- bind_rows(ranef.pos, ranef.neg)
+
+}
+)
+
+ranef.plot.df <- rbindlist(ranef.plot, idcol = TRUE) %>% 
+  dplyr::group_by(.id, country, variable, dv.response) %>% 
+  median_hdci()
+
+
+ggplot(ranef.plot.df) +
+  geom_point(aes(y = country, color = variable, x = .value), position = position_dodge(width = 0.75)) +
+  geom_linerange(aes(y = country, color = variable, xmin = 0, xmax = .value), position = position_dodge(width = 0.75)) +
+  geom_vline(xintercept = 0, color = "black", size = 0.75) +
+  facet_grid(dv.response ~ .id) +
+  theme_flynn() +
+  theme(legend.position = "bottom",
+        panel.spacing = unit(0.25, "line")) +
+  guides(color = guide_legend(reverse = TRUE, nrow = 2)) +
+  scale_color_viridis(discrete = TRUE, begin = 0.1, end = 0.9, option = "magma") +
+  labs(x = "Country-Level Error Estimate",
+       y = "",
+       color = "Contact/Benefit Type")
+
+```
+
+
+```{r country overlap comparisons}
+
+# Uses bayestestR library overlap function and p_direction functions to look at distribution of posterior values
+# Requires previous ranef.plot.df data frame to use since that has all the values to compare
+
+# Positive Responses 
+# Troops 
+# Contact
+p_direction(coef.plot.df$.value[coef.plot.df$country == "Italy" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Network Contact" &
+                                  coef.plot.df$dv.response == "Positive Assessments"])
+
+# Personal Benefits
+p_direction(coef.plot.df$.value[coef.plot.df$country == "Portugal" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Personal Benefit" &
+                                  coef.plot.df$dv.response == "Positive Assessments"])
+
+p_direction(coef.plot.df$.value[coef.plot.df$country == "Australia" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Personal Benefit" &
+                                  coef.plot.df$dv.response == "Positive Assessments"])
+
+p_direction(coef.plot.df$.value[coef.plot.df$country == "United Kingdom" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Personal Benefit" &
+                                  coef.plot.df$dv.response == "Positive Assessments"])
+
+p_direction(coef.plot.df$.value[coef.plot.df$country == "Germany" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Personal Benefit" &
+                                  coef.plot.df$dv.response == "Positive Assessments"])
+
+p_direction(coef.plot.df$.value[coef.plot.df$country == "Japan" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Personal Benefit" &
+                                  coef.plot.df$dv.response == "Positive Assessments"])
+
+p_direction(coef.plot.df$.value[coef.plot.df$country == "Netherlands" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Personal Benefit" &
+                                  coef.plot.df$dv.response == "Positive Assessments"])
+
+
+# Negative responses
+# Troops
+
+# Personal Benefit
+p_direction(coef.plot.df$.value[coef.plot.df$country == "Japan" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Personal Benefit" &
+                                  coef.plot.df$dv.response == "Negative Assessments"])
+
+# Network Benefit
+p_direction(coef.plot.df$.value[coef.plot.df$country == "South Korea" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Network Benefit" &
+                                  coef.plot.df$dv.response == "Negative Assessments"])
+
+
+p_direction(coef.plot.df$.value[coef.plot.df$country == "Poland" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Network Benefit" &
+                                  coef.plot.df$dv.response == "Negative Assessments"])
+
+p_direction(coef.plot.df$.value[coef.plot.df$country == "Italy" & 
+                                  coef.plot.df$.id == "US Troops" & 
+                                  coef.plot.df$variable == "Network Benefit" &
+                                  coef.plot.df$dv.response == "Negative Assessments"])
+
+
+```
+
+
+# Coefficient direction summary.
+
+```{r coefficient direction summary}
+
+t.1.describe <- describe_posterior(m.c.t1)
+
+g.1.describe <- describe_posterior(m.c.g1)
+
+p.1.describe <- describe_posterior(m.c.p1)
+
+```
+
+
+```{r}
+
+test <- tidybayes::spread_draws(m.c.t1, b_mupos_contact_persYes, b_mupos_contact_nonpersYes)
+
+overlap <- overlap(test$b_mupos_contact_persYes, test$b_mupos_contact_nonpersYes)
+
+
+ggplot(attributes(overlap)$data) +
+  geom_area(aes(x = x, y = y1, fill = "Personal Contact"), alpha = 0.3, color = "black") +
+  geom_area(aes(x = x, y = y2, fill = "Network Contact"), alpha = 0.3, color = "black") +
+  geom_area(aes(x = x, y = intersection, fill = "Overlap"), alpha = 0.9, color = "black") +
+  annotate("text", x = 0.65, y =7, label = glue::glue("Overlap = {round(overlap, 3)}"), size = 5) +
+  scale_fill_viridis(option = "magma", begin = 0.1, end = 0.9, discrete = TRUE) +
+  theme_flynn() +
+  labs(x = "Coefficient Estimate",
+       y = "Density",
+       fill = "Coefficient Overlap")
+
+>>>>>>> parent of dd36452... Update code file commitments.
 ```
