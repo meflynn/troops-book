@@ -325,6 +325,7 @@ library(tidygraph)
 library(latex2exp)
 library(dagitty)
 library(ggraph)
+
 # Draw DAG for Protest Count
 
 coords <- list(x = c(Protest = 6, Troops = 5, Growth = 1, GDP = 0, Trade = 1, Population = 0, Regime = 3, Conflict = 1, Ally = 3),
@@ -506,12 +507,13 @@ ggsave(here("Figures/Chapter-Protests/fig-dag-protest-simple.png"), width = 8, h
 
 ```
 
+
 # Construct Propensity Score Weights
 
 ```{r propensity scores and weights, echo = FALSE}
 
 # Filter data to ensure complete cases on key variables
-# Mostly needed this for stan approach
+# Mostly needed this for pure stan approach
 #p.data.complete <- p.data %>% filter(!is.na(anti_us_protest) & !is.na(log_troops_z) & !is.na(log_troops_cumsum_z))
 
 
@@ -559,7 +561,6 @@ num.check <- brms::pp_check(m.numerator)
 
 
   #### Denominator Model ####
-
 
 # Adjustment set
 # { Alignment[t], Ally[t], GDP[t], Growth[t-1], Population[t], ProtestEnvironment[t-1], Protest[t-1], Rebellion[t-1], Regime[t], Troops[t-1], USWar[t] }
@@ -625,7 +626,7 @@ p.data <- p.data %>%
          iptw.1000 = ifelse(iptw.prod > 1000, 1000, iptw.prod))
 
 
-
+# Create separate data frames for different truncation levels
 iptw.10.df <- p.data %>% dplyr::select(ccode, anti_us_protest, anti_us_mil, log_troops_z, log_troops_cumsum_z, iptw.10) 
 iptw.50.df <- p.data %>% dplyr::select(ccode, anti_us_protest, anti_us_mil, log_troops_z, log_troops_cumsum_z, iptw.50) 
 iptw.100.df <- p.data %>% dplyr::select(ccode, anti_us_protest, anti_us_mil, log_troops_z, log_troops_cumsum_z, iptw.100) 
@@ -649,12 +650,11 @@ save(iptw.list, file = here("Data/Chapter-Protests/treatment-weight.RData"))
 
 ### NBREG
 
-
 These models look at the average treatment effect of US deployments
 
 ```{r ate-us-protest-models, echo = FALSE, }
 
-# Conflicted pckage really fucks things up
+# Conflicted package really fucks things up with Stan. Make sure it's not loaded.
 
 load(here("Data/Chapter-Protests/treatment-weight-20211230.RData"))
 
@@ -751,10 +751,11 @@ save(mil.ate.com, file = here::here("Output/Chapter-Protests/mil.ate.com.2021123
 
 ```{r Average Treatment Effect Figures}
 
+# Read in model outputs
 load(here("Output/Chapter-Protests/us-ate-com.20211230.RData"))
 load(here("Output/Chapter-Protests/mil.ate.com.20211230.RData"))
 
-
+# Generate posterior samples for the anti-US protest models
 ate.us <- lapply(us.ate.com, function(x) {
   
   temp <- gather_draws(x,
@@ -765,6 +766,7 @@ ate.us <- lapply(us.ate.com, function(x) {
 }
 )
 
+# Generate posterior draws for the anti-US military protest models
 ate.mil <- lapply(mil.ate.com, function(x) {
   
   temp <- gather_draws(x,
@@ -778,6 +780,8 @@ ate.mil <- lapply(mil.ate.com, function(x) {
 ate.com <- c("Anti-US Protests" = ate.us, 
              "Anti-US Military" = ate.mil)
 
+# Combine posterior draws into a single object. 
+# Also edit draw indices and variable/model labels for plotting.
 ate.fig.com <- data.table::rbindlist(ate.com, idcol = TRUE) %>% 
   mutate(.id = gsub("\\d", "", .id),
          .id = factor(.id, levels = c("Anti-US Protests", "Anti-US Military")),
@@ -785,7 +789,6 @@ ate.fig.com <- data.table::rbindlist(ate.com, idcol = TRUE) %>%
                             labels = c("Cumulative Troops", "Troops")),
          grouping = factor(glue::glue("{.id}, {.variable}")),
          model = factor(model, levels = c("IPTW 1000", "IPTW 100", "IPTW 50", "IPTW 10")))
-
 
 
 
@@ -821,6 +824,8 @@ ggplot(ate.fig.com , aes(x = .value, y = .variable, group = model)) +
 
   ggsave(here::here("Figures/Chapter-Protests/figure-ate-troops.jpg"), height = 6, width = 6, unit = "in")
   
+  
+# Calculate the percent positive/negative for posterior groupings.
   ate.pd <- ate.fig.com %>% 
     group_by(.id, .variable, model) %>% 
     summarise(median = round(median(.value), 2),
@@ -828,7 +833,7 @@ ggplot(ate.fig.com , aes(x = .value, y = .variable, group = model)) +
 
 
 
-  # Plot predicted values to help show the substantive magnitude of the effects  
+# Plot predicted values to help show the substantive magnitude of the effects  
 newdata <- expand_grid(ccode = 732,
                        log_troops_z = seq_range(p.data$log_troops_z, 50),
                        log_troops_cumsum_z = mean(p.data$log_troops_cumsum_z, na.rm = TRUE))
